@@ -2,8 +2,8 @@ name: peregrine-tick
 
 on:
   workflow_dispatch: {}
-  schedule:
-    - cron: "*/10 * * * *" # every 10 minutes
+  # NOTE: Scheduling is handled by OpenClaw cron on the host.
+  # Keep this workflow manual-only as a fallback.
 
 permissions:
   contents: write
