@@ -2,13 +2,12 @@
 
 ## Summary
 
-Replicate the sports footer from https://www.spreadex.com/sports/mobile/homepage exactly in the mobile UI, ensuring pixel-perfect fidelity, interactivity, accessibility, and responsiveness. Implement error and offline handling as specified, and add telemetry for link clicks.
+Replicate the sports footer from [Spreadex mobile homepage](https://www.spreadex.com/sports/mobile/homepage) in our mobile UI, matching the reference exactly in HTML, CSS, layout, icons, interactivity, and accessibility. Ensure responsive behavior, error handling, and telemetry as specified.
 
 ---
 
 ## Steps
 
-1. **Audit Reference Footer**
-   - Take s
+1. **Reference Analysis*
 
 [REDACTED]
