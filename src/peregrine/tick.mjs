@@ -41,10 +41,10 @@ import {
   updatePullRequest,
   cloneRepo,
 } from "./github.mjs";
-import { planDev, rewritePrdFromIntake } from "./openai.mjs";
+import { planDev, rewritePrdFromIntake, reviewAgainstPrd } from "./openai.mjs";
 import { implementFromPrd } from "./implement.mjs";
-import { boolEnv, ensureDir, intEnv, newRunId } from "./util.mjs";
-import { writeEvent, writeImplementation, writePatch, writePlan, writePrd, writeStatus } from "./artifacts.mjs";
+import { boolEnv, ensureDir, intEnv, newRunId, sh } from "./util.mjs";
+import { writeEvent, writeImplementation, writePatch, writePlan, writePrd, writeReview, writeStatus } from "./artifacts.mjs";
 
 const ROOT = process.cwd();
 const REDACT = boolEnv("PEREGRINE_REDACT_ARTIFACTS", true);
@@ -107,7 +107,8 @@ async function processIntake(page) {
   });
 }
 
-async function processReadyForDev(page) {
+async function processReadyForDev(page, { humanFeedback = "" } = {}) {  // humanFeedback: used when rerunning from Needs Changes
+
   const pageId = page.id;
   const issueUrl = readUrl(page, "GitHub Issue");
   const existingPrUrl = readUrl(page, "GitHub PR");
@@ -152,7 +153,7 @@ async function processReadyForDev(page) {
   writeEvent({ root: ROOT, runId, kind: "DEV", text: `Implementing`, redact: REDACT });
   let impl;
   try {
-    impl = await implementFromPrd({ dir: tmp, prdBody, plan, maxIters: 2 });
+    impl = await implementFromPrd({ dir: tmp, prdBody, plan, maxIters: 2, humanFeedback });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     await setLatestFeedback(pageId, msg);
@@ -236,18 +237,139 @@ async function processReadyForDev(page) {
   });
 }
 
+function parseVerdict(reviewMarkdown) {
+  const m = String(reviewMarkdown || "").match(/Verdict:\s*(PASS|FAIL)/i);
+  if (!m) return "";
+  return m[1].toUpperCase();
+}
+
+async function processNeedsChanges(page) {
+  const feedback = readRichText(page, "Latest Feedback").trim();
+  return processReadyForDev(page, { humanFeedback: feedback });
+}
+
+function getPrDiffSummary({ dir, baseRef, headRef }) {
+  // Fetch refs into stable local names so we can diff reliably.
+  sh("git", ["-C", dir, "fetch", "origin", `${baseRef}:refs/heads/peregrine_base`], { timeout: 60_000 });
+  sh("git", ["-C", dir, "fetch", "origin", `${headRef}:refs/heads/peregrine_head`], { timeout: 60_000 });
+
+  const diffStat = sh("git", ["-C", dir, "diff", "peregrine_base...peregrine_head", "--stat"], { timeout: 60_000 }).stdout;
+  const changedFiles = sh("git", ["-C", dir, "diff", "peregrine_base...peregrine_head", "--name-only"], { timeout: 60_000 }).stdout;
+
+  return [
+    "## Diff stat",
+    "",
+    "```",
+    diffStat.trim() || "(no changes)",
+    "```",
+    "",
+    "## Changed files",
+    "",
+    ...(changedFiles
+      .split("\n")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .map((f) => `- ${f}`)),
+  ].join("\n");
+}
+
+async function processInReview(page) {
+  const pageId = page.id;
+  const issueUrl = readUrl(page, "GitHub Issue");
+  const prUrl = readUrl(page, "GitHub PR");
+  const runId = readRichText(page, "Run ID") || newRunId(readTitle(page));
+  await setRunId(pageId, runId);
+
+  const issueRef = parseIssueFromUrl(issueUrl);
+  if (!issueRef) throw new Error(`Missing or invalid GitHub Issue URL on card: ${issueUrl}`);
+  const prRef = parsePrFromUrl(prUrl);
+  if (!prRef) throw new Error(`Missing or invalid GitHub PR URL on card: ${prUrl}`);
+
+  const repo = `${issueRef.owner}/${issueRef.repo}`;
+
+  // Pull PRD from GitHub issue body
+  const issue = await getIssue({ repo, issueNumber: issueRef.number });
+  const prdBody = issue.body || "";
+
+  const pr = await getPullRequest({ repo, prNumber: prRef.number });
+
+  writeEvent({ root: ROOT, runId, kind: "REVIEW", text: `Reviewing ${pr.html_url}`, redact: REDACT });
+
+  // Compute a basic diff summary (git-based) for the reviewer model.
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), `peregrine-review-${runId}-`));
+  await cloneRepo({ repo, dir: tmp });
+
+  const baseRef = pr.base?.ref || "main";
+  const headRef = pr.head?.ref;
+  if (!headRef) throw new Error(`PR head ref missing for ${pr.html_url}`);
+
+  const prDiffSummary = getPrDiffSummary({ dir: tmp, baseRef, headRef });
+
+  const review = await reviewAgainstPrd({ prdBody, prDiffSummary, prBody: pr.body || "" });
+  writeReview({ root: ROOT, runId, reviewMarkdown: review, redact: REDACT });
+
+  const verdict = parseVerdict(review);
+  const truncated = String(review).slice(0, 60_000);
+  await commentOnIssue({ repo, issueNumber: prRef.number, body: `## Peregrine review\n\n${truncated}` });
+
+  if (verdict === "PASS") {
+    await setLatestFeedback(pageId, "Review PASS — marked Ready to Merge");
+    await setStatus(pageId, "Ready to Merge");
+    writeStatus({
+      root: ROOT,
+      runId,
+      status: "Ready to Merge",
+      repo,
+      notionUrl: notionPageUrl(page),
+      issueUrl: issue.html_url,
+      prUrl: pr.html_url,
+      redact: REDACT,
+    });
+    writeEvent({ root: ROOT, runId, kind: "REVIEW_PASS", text: `Ready to Merge: ${pr.html_url}`, redact: REDACT });
+    return;
+  }
+
+  // Default to FAIL if we couldn't parse a verdict.
+  // Store the review content in Notion so the dev rerun can use it as guidance.
+  await setLatestFeedback(pageId, review);
+  await setStatus(pageId, "Needs Changes");
+  writeStatus({
+    root: ROOT,
+    runId,
+    status: "Needs Changes",
+    repo,
+    notionUrl: notionPageUrl(page),
+    issueUrl: issue.html_url,
+    prUrl: pr.html_url,
+    redact: REDACT,
+  });
+  writeEvent({ root: ROOT, runId, kind: "REVIEW_FAIL", text: `Needs Changes: ${pr.html_url}`, redact: REDACT });
+}
+
 async function safeHandle(page, fn) {
+  // Notion pages are blocks; archived/in_trash pages cannot be edited and will throw:
+  // "Can't edit block that is archived".
+  if (page?.archived || page?.in_trash) return;
+
   const pageId = page.id;
   const title = readTitle(page);
   const runId = readRichText(page, "Run ID") || newRunId(title);
   try {
     await fn();
-    await setLastError(pageId, "");
+    try {
+      await setLastError(pageId, "");
+    } catch {
+      // ignore Notion write failures (e.g., card archived mid-run)
+    }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    await setLastError(pageId, msg);
-    await setLatestFeedback(pageId, msg);
-    await setStatus(pageId, "Error");
+    try {
+      await setLastError(pageId, msg);
+      await setLatestFeedback(pageId, msg);
+      await setStatus(pageId, "Error");
+    } catch {
+      // ignore Notion write failures (e.g., card archived/in trash)
+    }
     writeEvent({ root: ROOT, runId, kind: "ERROR", text: msg, redact: true });
   }
 }
@@ -267,6 +389,20 @@ async function main() {
   const readyItems = (ready.results ?? []).slice(0, max);
   for (const page of readyItems) {
     await safeHandle(page, async () => processReadyForDev(page));
+  }
+
+  // Needs Changes (rerun dev loop on same PR/branch, using Latest Feedback as guidance)
+  const needsChanges = await queryItemsByStatus("Needs Changes");
+  const needsChangesItems = (needsChanges.results ?? []).slice(0, max);
+  for (const page of needsChangesItems) {
+    await safeHandle(page, async () => processNeedsChanges(page));
+  }
+
+  // In Review (automated PRD-vs-diff review; advances to Ready to Merge or back to Needs Changes)
+  const inReview = await queryItemsByStatus("In Review");
+  const inReviewItems = (inReview.results ?? []).slice(0, max);
+  for (const page of inReviewItems) {
+    await safeHandle(page, async () => processInReview(page));
   }
 
   // Note: do NOT commit/push artifacts here.

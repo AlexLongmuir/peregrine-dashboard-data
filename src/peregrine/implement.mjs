@@ -101,7 +101,8 @@ function extractHintsFromPrd(prdBody) {
   return [...new Set(candidates)].slice(0, 8);
 }
 
-export async function implementFromPrd({ dir, prdBody, plan, maxIters = 2 }) {
+export async function implementFromPrd({ dir, prdBody, plan, maxIters = 2, humanFeedback = "" }) {  // humanFeedback: optional guidance from Notion "Latest Feedback" when rerunning after Needs Changes
+
   // Collect repo context
   const files = listRepoFiles(dir, 3000);
   const hints = extractHintsFromPrd(prdBody);
@@ -146,13 +147,15 @@ export async function implementFromPrd({ dir, prdBody, plan, maxIters = 2 }) {
       sh("git", ["-C", dir, "reset", "--hard"]);
     } catch {}
 
+    const combinedErr = [humanFeedback, lastErr].filter(Boolean).join("\n\n");
+
     const edits = await generateEdits({
       prdBody,
       plan,
       allowedPaths,
       repoFiles: files,
       candidateFiles,
-      previousError: lastErr,
+      previousError: combinedErr,
     });
 
     const filesToWrite = Array.isArray(edits.files) ? edits.files : [];
