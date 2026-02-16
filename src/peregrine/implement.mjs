@@ -108,17 +108,40 @@ export async function implementFromPrd({ dir, prdBody, plan, maxIters = 2, human
   const hints = extractHintsFromPrd(prdBody);
   const grep = grepSnippets(dir, hints);
 
-  const picked = filePathsFromGrep(grep, 20).filter((p) => files.includes(p));
+  // IMPORTANT: exclude Peregrine run-docs from the dev agent's editable set.
+  // The runner itself may write docs/peregrine/<runId>.md after successful code changes,
+  // but allowing the model to edit docs/peregrine/* leads to "doc-only" no-op attempts.
+  const excludedPrefixes = ["docs/peregrine/"];
+  const excludedNames = new Set(["package-lock.json", "yarn.lock", "pnpm-lock.yaml"]);
+
+  const isExcluded = (p) =>
+    excludedNames.has(p) || excludedPrefixes.some((pref) => p.startsWith(pref));
+
+  const picked = filePathsFromGrep(grep, 40).filter((p) => files.includes(p) && !isExcluded(p));
 
   // Heuristics based on filenames (landing/home/benefit)
   const byName = files
     .filter((p) => /(^|\/)(landing|benefit|home|welcome)/i.test(p))
-    .slice(0, 20);
+    .filter((p) => !isExcluded(p))
+    .slice(0, 60);
+
+  // Broad allowlist (more generous): allow edits across likely code/config files.
+  // Keep prompt size manageable; we can still validate against this list.
+  const broad = files
+    .filter((p) => !isExcluded(p))
+    .filter(
+      (p) =>
+        /^(src|app|components|backend|packages|lib|utils|hooks|services|server|client|pages)\//i.test(p) ||
+        /\.(ts|tsx|js|jsx|json|css|scss|less|yml|yaml|toml|graphql|gql|sql|prisma|py|go|java|kt|swift|m|mm|h)$/i.test(p)
+    )
+    .slice(0, 800);
 
   // Avoid App.tsx unless it appears in grep/name matches.
-  const allowedPaths = [...new Set([...picked, ...byName])].filter((p) => p !== "App.tsx").slice(0, 25);
+  const allowedPaths = [...new Set([...picked, ...byName, ...broad])]
+    .filter((p) => p !== "App.tsx")
+    .slice(0, 250);
 
-  // If we still have nothing, include a minimal set of likely entrypoints (but last resort)
+  // If we still have nothing, include a minimal set of likely entrypoints (last resort)
   if (allowedPaths.length === 0) {
     const fallback = [
       "app/index.tsx",
