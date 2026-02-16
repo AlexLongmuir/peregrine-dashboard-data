@@ -134,6 +134,12 @@ export async function commentOnIssue({ repo, issueNumber, body }) {
   return res.data;
 }
 
+export async function listInstallationRepos({ perPage = 100 } = {}) {
+  const octokit = getOctokit();
+  const res = await octokit.request("GET /installation/repositories", { per_page: perPage });
+  return (res.data.repositories || []).map((r) => r.full_name).filter(Boolean);
+}
+
 export async function cloneRepo({ repo, dir, token }) {
   const { owner, repo: name } = parseRepo(repo);
   const t = token ?? (await getInstallationToken());

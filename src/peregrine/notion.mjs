@@ -40,6 +40,49 @@ async function queryWithStatusKind(dsId, kind, filter, max) {
   });
 }
 
+export async function getDataSource() {
+  const dsId = requireEnv("NOTION_DATA_SOURCE_ID");
+  return notionFetch(`https://api.notion.com/v1/data_sources/${dsId.replace(/-/g, "")}`);
+}
+
+export async function patchDataSource(properties) {
+  const dsId = requireEnv("NOTION_DATA_SOURCE_ID");
+  return notionFetch(`https://api.notion.com/v1/data_sources/${dsId.replace(/-/g, "")}`,
+    {
+      method: "PATCH",
+      body: JSON.stringify({ properties }),
+    }
+  );
+}
+
+export async function ensureSelectOptions({ propName, optionNames }) {
+  const ds = await getDataSource();
+  const prop = ds.properties?.[propName];
+  if (!prop || prop.type !== "select") return { skipped: true, reason: "missing_or_not_select" };
+
+  const existing = Array.isArray(prop.select?.options) ? prop.select.options : [];
+  const byName = new Map(existing.map((o) => [o.name, o]));
+
+  let changed = false;
+  for (const name of optionNames || []) {
+    const n = String(name || "").trim();
+    if (!n) continue;
+    if (!byName.has(n)) {
+      byName.set(n, { name: n, color: "default" });
+      changed = true;
+    }
+  }
+
+  if (!changed) return { skipped: true, reason: "no_changes" };
+
+  const merged = Array.from(byName.values()).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+  await patchDataSource({
+    [propName]: { select: { options: merged } },
+  });
+
+  return { skipped: false, added: merged.length - existing.length };
+}
+
 export async function queryItemsByStatus(status) {
   const dsId = requireEnv("NOTION_DATA_SOURCE_ID");
   const max = intEnv("PEREGRINE_MAX_ITEMS", 10);

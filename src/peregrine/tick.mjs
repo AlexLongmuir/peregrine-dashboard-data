@@ -14,6 +14,7 @@ import os from "node:os";
 import path from "node:path";
 
 import {
+  ensureSelectOptions,
   queryItemsByStatus,
   readRichText,
   readTargetRepo,
@@ -33,6 +34,7 @@ import {
   createPullRequest,
   getIssue,
   getPullRequest,
+  listInstallationRepos,
   gitCheckoutBranch,
   gitCheckoutNewBranch,
   gitCommitAll,
@@ -432,6 +434,15 @@ async function safeHandle(page, fn) {
 
 async function main() {
   const max = intEnv("PEREGRINE_MAX_ITEMS", 10);
+
+  // Keep the Target Repo dropdown in sync with repos the GitHub App can access.
+  // Best-effort: never fail the whole tick if this breaks.
+  try {
+    const repos = await listInstallationRepos({ perPage: 100 });
+    await ensureSelectOptions({ propName: "Target Repo (select)", optionNames: repos });
+  } catch {
+    // ignore
+  }
 
   // Intake
   const intake = await queryItemsByStatus("Intake");
