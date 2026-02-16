@@ -2,8 +2,8 @@
 
 
 ```
- src/components/mobile/homepage/HomepageView.tsx | 62 +++++++++++++++++++++----
- 1 file changed, 53 insertions(+), 9 deletions(-)
+ src/components/mobile/homepage/HomepageView.tsx | 57 +++++++++++++++++++++----
+ 1 file changed, 49 insertions(+), 8 deletions(-)
 
 ```
 

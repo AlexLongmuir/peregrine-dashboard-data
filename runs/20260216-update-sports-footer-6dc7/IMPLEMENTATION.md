@@ -2,12 +2,12 @@
 
 
 ```
- src/app/(mobile)/layout.tsx         |  23 ++-
- src/components/mobile/BottomNav.tsx | 297 +++++++++++++++++++++++++++++++-----
- 2 files changed, 276 insertions(+), 44 deletions(-)
+ src/components/mobile/BottomNav.tsx             |  72 ++++---
+ src/components/mobile/homepage/HomepageView.tsx | 251 +-----------------------
+ 2 files changed, 45 insertions(+), 278 deletions(-)
 
 ```
 
 ## Changed files
-- src/app/(mobile)/layout.tsx
 - src/components/mobile/BottomNav.tsx
+- src/components/mobile/homepage/HomepageView.tsx

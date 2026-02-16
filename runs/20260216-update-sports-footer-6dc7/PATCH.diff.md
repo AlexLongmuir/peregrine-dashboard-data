@@ -1,13 +1,13 @@
-diff --git a/src/app/(mobile)/layout.tsx b/src/app/(mobile)/layout.tsx
-index 5361c1f..657ca47 100644
---- a/src/app/(mobile)/layout.tsx
-+++ b/src/app/(mobile)/layout.tsx
-@@ -1,10 +1,27 @@
--import React from "react";
--import { MobileShell } from "@/components/mobile/MobileShell";
-+import "../globals.css";
-+import type { Metadata } from "next";
-+import { Inter } from "next/font/google";
-+import Mobil
+diff --git a/src/components/mobile/BottomNav.tsx b/src/components/mobile/BottomNav.tsx
+index ed06bce..b14adda 100644
+--- a/src/components/mobile/BottomNav.tsx
++++ b/src/components/mobile/BottomNav.tsx
+@@ -69,40 +69,23 @@ const footerLinks = [
+   },
+ ];
+ 
+-// Simulate router pathname for active state (replace with actual router in real app)
+ function usePathname(): string {
+-  const [pathname, setP
 
 [REDACTED]
