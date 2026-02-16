@@ -38,17 +38,20 @@ function listRepoFiles(dir, max = 2000) {
     .slice(0, max);
 }
 
-function grepSnippets(dir, terms, maxLines = 120) {
+function grepSnippets(dir, terms, maxLines = 160) {
   const out = [];
   for (const t of terms) {
     if (!t || t.length < 3) continue;
     try {
-      const { stdout } = sh("rg", ["-n", "-S", t, dir, "--max-count", "30"], {
-        timeout: 20 * 1000,
-      });
+      // Use git grep (more likely installed than ripgrep)
+      const { stdout } = sh(
+        "git",
+        ["-C", dir, "grep", "-n", "-I", "-S", t, "--", "."],
+        { timeout: 20 * 1000 }
+      );
       if (stdout.trim()) out.push(stdout.trim());
     } catch {
-      // ignore missing rg or no matches
+      // ignore no matches
     }
   }
   const joined = out.join("\n");
@@ -104,10 +107,28 @@ export async function implementFromPrd({ dir, prdBody, plan, maxIters = 2 }) {
   const hints = extractHintsFromPrd(prdBody);
   const grep = grepSnippets(dir, hints);
 
-  const picked = filePathsFromGrep(grep, 12).filter((p) => files.includes(p));
-  const mustInclude = ["App.tsx", "app/index.tsx", "app/LandingPage.tsx", "components/BenefitsSection.tsx"].filter((p) => files.includes(p));
+  const picked = filePathsFromGrep(grep, 20).filter((p) => files.includes(p));
 
-  const allowedPaths = [...new Set([...picked, ...mustInclude])].slice(0, 25);
+  // Heuristics based on filenames (landing/home/benefit)
+  const byName = files
+    .filter((p) => /(^|\/)(landing|benefit|home|welcome)/i.test(p))
+    .slice(0, 20);
+
+  // Avoid App.tsx unless it appears in grep/name matches.
+  const allowedPaths = [...new Set([...picked, ...byName])].filter((p) => p !== "App.tsx").slice(0, 25);
+
+  // If we still have nothing, include a minimal set of likely entrypoints (but last resort)
+  if (allowedPaths.length === 0) {
+    const fallback = [
+      "app/index.tsx",
+      "app/(tabs)/index.tsx",
+      "app/(auth)/index.tsx",
+      "app/_layout.tsx",
+      "app/(tabs)/_layout.tsx",
+      "components/BenefitsSection.tsx",
+    ].filter((p) => files.includes(p));
+    allowedPaths.push(...fallback);
+  }
 
   const candidateBlocks = [];
   for (const rel of allowedPaths.slice(0, 8)) {
