@@ -1,6 +1,7 @@
 # STATUS
-- Updated: 2026-02-16T10:30:33.242Z
-- Status: **PRD Drafted**
+- Updated: 2026-02-16T10:38:17.099Z
+- Status: **In Review**
 - Target repo: `AlexLongmuir/regretless-3`
-- Notion: https://www.notion.so/Test-change-benefit-3-on-landing-page-30903dbb59038092a1d1df06ee6bff2e
+- Notion: https://www.notion.so/Update-Benefit-3-Text-on-Landing-Page-for-Improved-Messaging-30903dbb59038092a1d1df06ee6bff2e
 - GitHub Issue: https://github.com/AlexLongmuir/regretless-3/issues/18
+- GitHub PR: https://github.com/AlexLongmuir/regretless-3/pull/19
