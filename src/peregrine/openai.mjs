@@ -161,8 +161,16 @@ Scoring rules (important):
 - Do NOT fail purely because you cannot *visually* verify a "pixel-perfect" UI requirement from code alone.
   - If the AC is inherently visual (layout, spacing, colors) and no screenshots/visual regression results are provided, mark that AC as MANUAL QA REQUIRED, describe exactly what a human should verify, and (if the implementation looks plausible) keep the overall verdict as PASS.
 
-Output MUST be Markdown with:
-- Verdict: PASS or FAIL
+Output MUST be Markdown.
+
+The FIRST LINE MUST be exactly:
+Verdict: PASS
+OR
+Verdict: FAIL
+
+(Do not add Markdown formatting to the PASS/FAIL token; keep it plain text.)
+
+Then include:
 - Manual QA required (bullet list; include when any AC cannot be verified from diff alone)
 - AC checklist: AC1.. each Pass/Fail/Manual + evidence or rationale
 - Key issues (if any)

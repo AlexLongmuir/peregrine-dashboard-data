@@ -120,6 +120,19 @@ export async function queryAllActive() {
   }
 }
 
+export async function queryItemsByName(name) {
+  const dsId = requireEnv("NOTION_DATA_SOURCE_ID");
+  const max = intEnv("PEREGRINE_MAX_ITEMS", 10);
+
+  return notionFetch(`https://api.notion.com/v1/data_sources/${dsId}/query`, {
+    method: "POST",
+    body: JSON.stringify({
+      filter: { property: "Name", title: { equals: String(name || "") } },
+      page_size: max,
+    }),
+  });
+}
+
 // ─── Read properties from a page ──────────────────────────────────────
 
 export function readTitle(page) {
@@ -140,6 +153,19 @@ export function readSelect(page, prop) {
 
 export function readUrl(page, prop) {
   return page.properties?.[prop]?.url ?? "";
+}
+
+export function readCheckbox(page, prop) {
+  return Boolean(page.properties?.[prop]?.checkbox);
+}
+
+export function readNumber(page, prop) {
+  const n = page.properties?.[prop]?.number;
+  return typeof n === "number" ? n : null;
+}
+
+export function readDateStart(page, prop) {
+  return page.properties?.[prop]?.date?.start ?? "";
 }
 
 // Target repo helper (supports both legacy rich_text and new dropdown select)

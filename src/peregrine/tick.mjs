@@ -15,7 +15,11 @@ import path from "node:path";
 
 import {
   ensureSelectOptions,
+  queryItemsByName,
   queryItemsByStatus,
+  readCheckbox,
+  readDateStart,
+  readNumber,
   readRichText,
   readTargetRepo,
   readTitle,
@@ -241,13 +245,54 @@ async function processReadyForDev(page, { humanFeedback = "" } = {}) {  // human
 }
 
 function parseVerdict(reviewMarkdown) {
-  const m = String(reviewMarkdown || "").match(/Verdict:\s*(PASS|FAIL)/i);
+  // The reviewer is instructed to output a line like:
+  //   Verdict: PASS
+  // But LLMs sometimes add Markdown formatting (e.g. **PASS** or headings like "## Verdict: **FAIL**").
+  // Be tolerant so we don't strand cards in Needs Changes due to formatting.
+  const text = String(reviewMarkdown || "");
+
+  // Strip common inline-markdown emphasis/code markers.
+  const cleaned = text.replace(/[*_`]/g, "");
+
+  // Prefer a verdict at the start of a line (supports headings/bullets/quotes).
+  const m = cleaned.match(/^[\s>#\-]*Verdict\s*:\s*(PASS|FAIL)\b/im);
   if (!m) return "";
   return m[1].toUpperCase();
 }
 
 async function processNeedsChanges(page) {
+  const pageId = page.id;
   const feedback = readRichText(page, "Latest Feedback").trim();
+
+  // If the card was bumped to Needs Changes due to a verdict parsing bug,
+  // the auto-review text may already be stored in Latest Feedback.
+  // Detect that and advance without re-running dev.
+  const existingVerdict = parseVerdict(feedback);
+  if (existingVerdict === "PASS") {
+    const issueUrl = readUrl(page, "GitHub Issue");
+    const prUrl = readUrl(page, "GitHub PR");
+    const runId = readRichText(page, "Run ID") || newRunId(readTitle(page));
+    await setRunId(pageId, runId);
+
+    const issueRef = parseIssueFromUrl(issueUrl);
+    const repo = issueRef ? `${issueRef.owner}/${issueRef.repo}` : "";
+
+    await setLatestFeedback(pageId, "Review PASS (from Latest Feedback) — marked Ready to Merge");
+    await setStatus(pageId, "Ready to Merge");
+    writeStatus({
+      root: ROOT,
+      runId,
+      status: "Ready to Merge",
+      repo,
+      notionUrl: notionPageUrl(page),
+      issueUrl,
+      prUrl,
+      redact: REDACT,
+    });
+    writeEvent({ root: ROOT, runId, kind: "REVIEW_PASS", text: `Ready to Merge (from Latest Feedback): ${prUrl}`, redact: REDACT });
+    return;
+  }
+
   return processReadyForDev(page, { humanFeedback: feedback });
 }
 
@@ -432,8 +477,55 @@ async function safeHandle(page, fn) {
   }
 }
 
+async function getAiFlowControl() {
+  // Master switch lives in a dedicated Notion card.
+  // If switch is missing/unreadable, default to enabled.
+  const controlTitle = process.env.PEREGRINE_CONTROL_CARD_TITLE || "🧭 Peregrine Control — AI Flow Master Switch";
+  try {
+    const res = await queryItemsByName(controlTitle);
+    const page = (res?.results ?? [])[0];
+    if (!page) return { enabled: true, intervalMin: 0, lastRunAtMs: 0, runNow: false, pageId: "" };
+
+    const enabled = readCheckbox(page, "AI Flow Enabled");
+    const intervalMin = Math.max(0, Math.round(readNumber(page, "AI Tick Interval (min)") ?? 0));
+    const runNow = readCheckbox(page, "AI Tick Run Now");
+
+    const lastIso = readDateStart(page, "AI Tick Last Run");
+    const lastRunAtMs = lastIso ? Date.parse(lastIso) : 0;
+
+    return { enabled, intervalMin, lastRunAtMs, runNow, pageId: page.id };
+  } catch {
+    return { enabled: true, intervalMin: 0, lastRunAtMs: 0, runNow: false, pageId: "" };
+  }
+}
+
 async function main() {
   const max = intEnv("PEREGRINE_MAX_ITEMS", 10);
+
+  // Global on/off switch + configurable cadence (prevents any GitHub/LLM work when off).
+  const ctl = await getAiFlowControl();
+  if (!ctl.enabled) {
+    console.log("Peregrine: AI flow disabled via Notion master switch; exiting tick.");
+    return;
+  }
+  if (!ctl.runNow && ctl.intervalMin > 0 && ctl.lastRunAtMs > 0) {
+    const elapsedMs = Date.now() - ctl.lastRunAtMs;
+    if (elapsedMs < ctl.intervalMin * 60_000) {
+      return; // too soon; noop
+    }
+  }
+  // Stamp last-run at start so overlapping cron triggers don't double-run.
+  // Also auto-clear "Run Now" so it behaves like a one-shot trigger.
+  if (ctl.pageId) {
+    try {
+      await updatePage(ctl.pageId, {
+        "AI Tick Last Run": { date: { start: new Date().toISOString() } },
+        "AI Tick Run Now": { checkbox: false },
+      });
+    } catch {
+      // ignore
+    }
+  }
 
   // Keep the Target Repo dropdown in sync with repos the GitHub App can access.
   // Best-effort: never fail the whole tick if this breaks.
