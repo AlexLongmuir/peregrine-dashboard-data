@@ -2,8 +2,12 @@
 
 ## Summary
 
-Replace the current sports header in the mobile UI with a pixel-perfect replica of the header from [Spreadex mobile homepage](https://www.spreadex.com/sports/mobile/homepage). This includes matching all visual and interactive aspects, ensuring responsiveness, and handling all relevant states (loading, error, offline, empty).
+Update the sports header in the Spreadex Mobile UI to be a 1:1, pixel-perfect replica of the header at [Spreadex Mobile Homepage](https://www.spreadex.com/sports/mobile/homepage). This includes exact HTML, CSS, assets, and interactive behavior, with full responsiveness and proper fallback states.
 
+---
 
+## Steps
+
+1. **Reference
 
 [REDACTED]
