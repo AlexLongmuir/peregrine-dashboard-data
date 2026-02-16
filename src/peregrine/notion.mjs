@@ -33,7 +33,7 @@ export async function queryItemsByStatus(status) {
   return notionFetch(`https://api.notion.com/v1/data_sources/${dsId}/query`, {
     method: "POST",
     body: JSON.stringify({
-      filter: { property: "Status", select: { equals: status } },
+      filter: { property: "Status", status: { equals: status } },
       page_size: max,
     }),
   });
@@ -48,8 +48,8 @@ export async function queryAllActive() {
     body: JSON.stringify({
       filter: {
         and: [
-          { property: "Status", select: { does_not_equal: "Done" } },
-          { property: "Status", select: { does_not_equal: "Error" } },
+          { property: "Status", status: { does_not_equal: "Done" } },
+          { property: "Status", status: { does_not_equal: "Error" } },
         ],
       },
       page_size: max,
@@ -89,7 +89,7 @@ export async function updatePage(pageId, properties) {
 }
 
 export async function setStatus(pageId, status) {
-  return updatePage(pageId, { Status: { select: { name: status } } });
+  return updatePage(pageId, { Status: { status: { name: status } } });
 }
 
 export async function setGitHubIssue(pageId, url) {
@@ -130,7 +130,7 @@ export async function createCard({ title, roughDraft, targetRepo, status = "Inta
         Name: { title: [{ text: { content: title } }] },
         "Rough Draft": { rich_text: [{ text: { content: roughDraft.slice(0, 2000) } }] },
         "Target Repo": { rich_text: [{ text: { content: targetRepo } }] },
-        Status: { select: { name: status } },
+        Status: { status: { name: status } },
       },
     }),
   });
