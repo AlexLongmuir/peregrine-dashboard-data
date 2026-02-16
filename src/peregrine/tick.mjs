@@ -346,6 +346,61 @@ async function processInReview(page) {
   writeEvent({ root: ROOT, runId, kind: "REVIEW_FAIL", text: `Needs Changes: ${pr.html_url}`, redact: REDACT });
 }
 
+async function processReadyToMerge(page) {
+  const pageId = page.id;
+  const issueUrl = readUrl(page, "GitHub Issue");
+  const prUrl = readUrl(page, "GitHub PR");
+  const runId = readRichText(page, "Run ID") || newRunId(readTitle(page));
+  await setRunId(pageId, runId);
+
+  const issueRef = parseIssueFromUrl(issueUrl);
+  if (!issueRef) throw new Error(`Missing or invalid GitHub Issue URL on card: ${issueUrl}`);
+  const prRef = parsePrFromUrl(prUrl);
+  if (!prRef) throw new Error(`Missing or invalid GitHub PR URL on card: ${prUrl}`);
+
+  const repo = `${issueRef.owner}/${issueRef.repo}`;
+
+  const issue = await getIssue({ repo, issueNumber: issueRef.number });
+  const pr = await getPullRequest({ repo, prNumber: prRef.number });
+
+  // If merged, we can mark Done.
+  if (pr.merged_at) {
+    await setLatestFeedback(pageId, `Merged (${pr.merged_at}) — marked Done`);
+    await setStatus(pageId, "Done");
+    writeStatus({
+      root: ROOT,
+      runId,
+      status: "Done",
+      repo,
+      notionUrl: notionPageUrl(page),
+      issueUrl: issue.html_url,
+      prUrl: pr.html_url,
+      redact: REDACT,
+    });
+    writeEvent({ root: ROOT, runId, kind: "MERGED", text: `Merged: ${pr.html_url}`, redact: REDACT });
+    return;
+  }
+
+  // If closed without merge, bounce it back.
+  if (pr.state === "closed") {
+    await setLatestFeedback(pageId, "PR closed without merge — sent back to Needs Changes");
+    await setStatus(pageId, "Needs Changes");
+    writeStatus({
+      root: ROOT,
+      runId,
+      status: "Needs Changes",
+      repo,
+      notionUrl: notionPageUrl(page),
+      issueUrl: issue.html_url,
+      prUrl: pr.html_url,
+      redact: REDACT,
+    });
+    writeEvent({ root: ROOT, runId, kind: "PR_CLOSED", text: `Closed without merge: ${pr.html_url}`, redact: REDACT });
+  }
+
+  // If still open, do nothing.
+}
+
 async function safeHandle(page, fn) {
   // Notion pages are blocks; archived/in_trash pages cannot be edited and will throw:
   // "Can't edit block that is archived".
@@ -403,6 +458,13 @@ async function main() {
   const inReviewItems = (inReview.results ?? []).slice(0, max);
   for (const page of inReviewItems) {
     await safeHandle(page, async () => processInReview(page));
+  }
+
+  // Ready to Merge (if PR merged, mark Done)
+  const readyToMerge = await queryItemsByStatus("Ready to Merge");
+  const readyToMergeItems = (readyToMerge.results ?? []).slice(0, max);
+  for (const page of readyToMergeItems) {
+    await safeHandle(page, async () => processReadyToMerge(page));
   }
 
   // Note: do NOT commit/push artifacts here.
