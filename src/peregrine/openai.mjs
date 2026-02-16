@@ -92,32 +92,34 @@ Output MUST be Markdown with sections:
   return res.choices?.[0]?.message?.content ?? "";
 }
 
-export async function generatePatch({ prdBody, plan, repoFiles, grepSnippets, fileProbes, previousError }) {
+export async function generateEdits({ prdBody, plan, repoFiles, candidateFiles, previousError }) {
   const openai = client();
   const m = model("OPENAI_MODEL_DEV", "gpt-4.1");
 
-  const system = `You are a senior engineer working in a repo. You will output ONE unified diff patch that implements the PRD.
+  const system = `You are a senior engineer. Implement the PRD by editing files.
+
+Output MUST be valid JSON with this shape:
+{
+  "files": [
+    {"path": "relative/path.tsx", "content": "<full new file content>"}
+  ]
+}
 
 Hard requirements:
-- Output ONLY a unified diff (starts with 'diff --git'). No prose.
+- Provide FULL new content for each file you change.
 - Touch at most 5 files.
-- No binaries.
-- Prefer minimal change.
-- Do not change docs/peregrine/* unless also changing real code.
-- If prior error is provided, fix that exact problem.
+- Only use paths that exist in the repo file list.
+- No binary files.
+- Prefer minimal changes.
+- If previousError is provided, fix that exact problem.
 
-Repo context:
-- This is an Expo + React Native + TypeScript app with a Next.js backend in backend/.
-- You may need to locate the landing page component and update copy.
-
-If you cannot confidently implement, output an empty diff that changes nothing.`;
+Do NOT include markdown fences. JSON only.`;
 
   const user = [
     `# PRD\n\n${prdBody}`,
     `# Plan\n\n${plan}`,
-    `# Repo file list (partial)\n${(repoFiles || []).slice(0, 1500).join("\n")}`,
-    grepSnippets ? `# Grep snippets\n${grepSnippets}` : null,
-    fileProbes ? `# File probes\n${fileProbes}` : null,
+    `# Repo file list (partial)\n${(repoFiles || []).slice(0, 2000).join("\n")}`,
+    candidateFiles ? `# Candidate file contents\n${candidateFiles}` : null,
     previousError ? `# Previous error\n${previousError}` : null,
   ]
     .filter(Boolean)
@@ -126,13 +128,23 @@ If you cannot confidently implement, output an empty diff that changes nothing.`
   const res = await openai.chat.completions.create({
     model: m,
     temperature: 0.1,
+    response_format: { type: "json_object" },
     messages: [
       { role: "system", content: system },
       { role: "user", content: user },
     ],
   });
 
-  return res.choices?.[0]?.message?.content ?? "";
+  const text = res.choices?.[0]?.message?.content ?? "{}";
+  let json;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    throw new Error(`Dev agent returned non-JSON: ${text.slice(0, 300)}`);
+  }
+
+  if (!Array.isArray(json.files)) throw new Error(`Dev agent JSON missing files[]: ${text.slice(0, 300)}`);
+  return json;
 }
 
 export async function reviewAgainstPrd({ prdBody, prDiffSummary, prBody }) {

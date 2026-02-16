@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 import { sh } from "./util.mjs";
-import { generatePatch } from "./openai.mjs";
+import { generateEdits } from "./openai.mjs";
 
 function readJson(p) {
   try {
@@ -38,21 +38,30 @@ function listRepoFiles(dir, max = 2000) {
     .slice(0, max);
 }
 
-function grepSnippets(dir, terms, maxLines = 80) {
+function grepSnippets(dir, terms, maxLines = 120) {
   const out = [];
   for (const t of terms) {
     if (!t || t.length < 3) continue;
     try {
-      const { stdout } = sh("rg", ["-n", "-S", t, dir, "--max-count", "20"], {
+      const { stdout } = sh("rg", ["-n", "-S", t, dir, "--max-count", "30"], {
         timeout: 20 * 1000,
       });
-      if (stdout.trim()) out.push(`## rg: ${t}\n${stdout.trim()}`);
+      if (stdout.trim()) out.push(stdout.trim());
     } catch {
       // ignore missing rg or no matches
     }
   }
-  const joined = out.join("\n\n");
+  const joined = out.join("\n");
   return joined.split("\n").slice(0, maxLines).join("\n");
+}
+
+function filePathsFromGrep(grepText, max = 8) {
+  const paths = [];
+  for (const line of String(grepText || "").split("\n")) {
+    const m = line.match(/^([^:\n]+):(\d+):/);
+    if (m) paths.push(m[1]);
+  }
+  return [...new Set(paths)].slice(0, max);
 }
 
 function readFileSafe(p, maxChars = 8000) {
@@ -91,57 +100,67 @@ function extractHintsFromPrd(prdBody) {
 
 export async function implementFromPrd({ dir, prdBody, plan, maxIters = 2 }) {
   // Collect repo context
-  const files = listRepoFiles(dir, 2000);
+  const files = listRepoFiles(dir, 3000);
   const hints = extractHintsFromPrd(prdBody);
   const grep = grepSnippets(dir, hints);
 
-  // Include a couple likely entrypoints if they exist
-  const probePaths = [
-    "App.tsx",
-    "app/index.tsx",
-    "app/(tabs)/index.tsx",
-    "app/(auth)/index.tsx",
-    "components",
-    "app",
-    "backend/src",
-    "backend/app",
-  ];
-  const probe = [];
-  for (const rel of probePaths) {
+  const picked = filePathsFromGrep(grep, 8).filter((p) => files.includes(p));
+  const candidateBlocks = [];
+  for (const rel of picked.slice(0, 5)) {
     const abs = path.join(dir, rel);
-    if (fs.existsSync(abs) && fs.statSync(abs).isFile()) {
-      const c = readFileSafe(abs, 6000);
-      if (c) probe.push(`## file: ${rel}\n\n${c}`);
-    }
+    const c = readFileSafe(abs, 12000);
+    if (c) candidateBlocks.push(`## file: ${rel}\n\n${c}`);
   }
+
+  // Include a couple likely entrypoints if they exist
+  for (const rel of ["App.tsx", "app/index.tsx", "app/LandingPage.tsx", "components/BenefitsSection.tsx"]) {
+    if (candidateBlocks.length >= 6) break;
+    if (!files.includes(rel)) continue;
+    const abs = path.join(dir, rel);
+    const c = readFileSafe(abs, 12000);
+    if (c) candidateBlocks.push(`## file: ${rel}\n\n${c}`);
+  }
+
+  const candidateFiles = candidateBlocks.join("\n\n");
 
   let lastErr = "";
   for (let i = 0; i < maxIters; i++) {
-    const patch = await generatePatch({
+    // Reset to clean state each attempt
+    try {
+      sh("git", ["-C", dir, "reset", "--hard"]);
+    } catch {}
+
+    const edits = await generateEdits({
       prdBody,
       plan,
       repoFiles: files,
-      grepSnippets: grep,
-      fileProbes: probe.join("\n\n"),
+      candidateFiles,
       previousError: lastErr,
     });
 
-    if (!patch || !patch.includes("diff --git")) {
-      lastErr = "Model did not return a unified diff patch.";
+    const filesToWrite = Array.isArray(edits.files) ? edits.files : [];
+    if (filesToWrite.length === 0) {
+      lastErr = "Dev agent produced zero file edits.";
       continue;
     }
 
-    const patchPath = path.join(dir, ".peregrine.patch");
-    fs.writeFileSync(patchPath, patch);
+    // Validate + write (all-or-nothing)
+    const toWrite = filesToWrite.slice(0, 5).map((f) => ({
+      rel: String(f.path || "").replace(/^\/*/, ""),
+      content: String(f.content ?? ""),
+    }));
 
-    try {
-      sh("git", ["-C", dir, "apply", "--whitespace=fix", patchPath]);
-    } catch (e) {
-      lastErr = e instanceof Error ? e.message : String(e);
+    const invalid = toWrite.find((f) => !f.rel || !files.includes(f.rel));
+    if (invalid) {
+      lastErr = `Invalid file path from dev agent: ${invalid.rel}`;
       continue;
     }
 
-    // Require at least one non-doc change
+    for (const f of toWrite) {
+      const abs = path.join(dir, f.rel);
+      fs.writeFileSync(abs, f.content);
+    }
+
     const changed = sh("git", ["-C", dir, "diff", "--name-only"]).stdout
       .split("\n")
       .map((s) => s.trim())
@@ -149,9 +168,7 @@ export async function implementFromPrd({ dir, prdBody, plan, maxIters = 2 }) {
 
     const nonDoc = changed.filter((p) => !p.startsWith("docs/peregrine/"));
     if (nonDoc.length === 0) {
-      // revert and try again
-      sh("git", ["-C", dir, "reset", "--hard"]);
-      lastErr = "Patch only changed docs/peregrine/. Need actual code changes.";
+      lastErr = "Edits only changed docs/peregrine/. Need actual code changes.";
       continue;
     }
 
@@ -169,17 +186,15 @@ export async function implementFromPrd({ dir, prdBody, plan, maxIters = 2 }) {
       }
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      // revert so next iteration has clean tree
-      try {
-        sh("git", ["-C", dir, "reset", "--hard"]);
-      } catch {}
       lastErr = `Checks failed: ${msg}`;
       continue;
     }
 
+    const patch = sh("git", ["-C", dir, "diff"]).stdout;
     const stat = sh("git", ["-C", dir, "diff", "--stat"]).stdout;
+
     return { ok: true, patch, diffStat: stat, changedFiles: changed };
   }
 
-  return { ok: false, error: lastErr || "Failed to generate/apply a patch" };
+  return { ok: false, error: lastErr || "Failed to generate/apply edits" };
 }
