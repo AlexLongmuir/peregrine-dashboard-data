@@ -2,13 +2,13 @@
 
 ## Summary
 
-Replicate the Spreadex mobile homepage footer exactly in our mobile UI, matching all visual and interactive aspects, ensuring responsiveness, accessibility, and error handling as specified.
+Replicate the sports footer from https://www.spreadex.com/sports/mobile/homepage exactly in the mobile UI, matching layout, icons, text, colors, spacing, and interactivity. Ensure responsiveness, accessibility, and error handling as per PRD.
 
 ---
 
 ## Steps
 
 1. **Reference Analysis**
-   - Inspect and extract the HTML and CSS for the footer from https://www.spreadex.com/sports/mobile/
+   - Take high-resolution screenshots of the refe
 
 [REDACTED]

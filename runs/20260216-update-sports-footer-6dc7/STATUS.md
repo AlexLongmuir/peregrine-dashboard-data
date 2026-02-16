@@ -1,5 +1,5 @@
 # STATUS
-- Updated: 2026-02-16T13:29:13.956Z
+- Updated: 2026-02-16T13:33:11.503Z
 - Status: **Needs Changes**
 - Target repo: `AlexLongmuir/spreadex-mobile-ui`
 - Notion: https://www.notion.so/Update-Sports-Footer-to-Match-Spreadex-Mobile-Homepage-30903dbb59038005ac18f9bc1de781c8
