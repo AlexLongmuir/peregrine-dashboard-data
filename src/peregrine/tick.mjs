@@ -196,19 +196,8 @@ async function main() {
     await safeHandle(page, async () => processReadyForDev(page));
   }
 
-  // If artifacts changed, commit them (for GH Actions)
-  // no-op locally unless git repo present
-  try {
-    if (fs.existsSync(path.join(ROOT, ".git"))) {
-      const { stdout } = sh("git", ["status", "--porcelain"]);
-      if (stdout.trim()) {
-        sh("git", ["add", "runs"]);
-        sh("git", ["commit", "-m", `peregrine: update run artifacts`]);
-      }
-    }
-  } catch {
-    // ignore
-  }
+  // Note: do NOT commit/push artifacts here.
+  // The wrapper (OpenClaw cron script) or GitHub Actions workflow should handle committing run artifacts.
 }
 
 main().catch((e) => {
