@@ -36,3 +36,6 @@
 - 2026-02-16T13:30:13.829Z **DEV** — Planning
 - 2026-02-16T13:30:35.565Z **DEV** — Implementing
 - 2026-02-16T13:33:11.503Z **DEV_FAIL** — Checks failed: Command failed: npm -C /tmp/peregrine-20260216-update-sports-footer-6dc7-5BBJTO run -s lint  /tmp/peregrine-20260216-update-sports-footer-6dc7-5BBJTO/src/components/mobile/BottomNav.tsx     1:1   warning  Unused eslint-disable directive (no problems were reported from '@next/next/no-img-element')    34:51  error    Unexpected any. Specify a different type                              [REDACTED] 
+- 2026-02-16T13:35:28.158Z **DEV** — Planning
+- 2026-02-16T13:35:51.304Z **DEV** — Implementing
+- 2026-02-16T13:37:56.429Z **DEV_FAIL** — Checks failed: Command failed: npm -C /tmp/peregrine-20260216-update-sports-footer-6dc7-WatlRy run -s lint  /tmp/peregrine-20260216-update-sports-footer-6dc7-WatlRy/src/components/mobile/BottomNav.tsx    3:41  warning  'useRef' is defined but never used        @typescript-eslint/no-unused-vars   90:51  error    Unexpected any. Specify a different type  @typescript-eslint/no-explicit-any   91:16  e  [REDACTED] 
