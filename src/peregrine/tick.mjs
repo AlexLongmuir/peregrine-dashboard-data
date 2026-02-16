@@ -125,7 +125,7 @@ async function processReadyForDev(page) {
   // Create a scaffolding PR in the target repo.
   // NOTE: This does NOT implement code changes yet; it creates a branch + adds docs/peregrine/<runId>.md
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), `peregrine-${runId}-`));
-  cloneRepo({ repo, dir: tmp });
+  await cloneRepo({ repo, dir: tmp });
   gitConfigUser({ dir: tmp });
 
   const branch = `peregrine/${runId}`;
