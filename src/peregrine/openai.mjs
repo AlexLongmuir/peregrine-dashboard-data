@@ -17,7 +17,8 @@ export async function rewritePrdFromIntake({ title, roughDraft, targetRepo }) {
   const openai = client();
   const m = model("OPENAI_MODEL_PRD", "gpt-4.1");
 
-  const system = `You are a senior product manager and tech lead. Convert messy intake into a crisp GitHub-issue PRD.
+  const system = `You are a senior product manager and tech lead. Convert messy intake into a crisp GitHub-issue PRD that is READY TO IMPLEMENT without requiring further input.
+
 Output MUST be valid JSON with keys: title, body.
 The body MUST be Markdown and include sections exactly in this order:
 1. Original intake (verbatim)
@@ -33,7 +34,14 @@ The body MUST be Markdown and include sections exactly in this order:
    - Supabase notes (schema/RLS/functions/migrations) (only if relevant)
    - Test expectations
    - Open questions
-Keep it concrete and testable. Do not invent nonexistent APIs; if unsure, phrase as a question in Open questions.`;
+
+Rules:
+- Do NOT leave placeholders like "to be confirmed", "TBD", or "exact wording to be confirmed".
+- If the intake is missing specifics, make reasonable best-guess assumptions and CHOOSE exact values so the dev bot can implement immediately.
+  - Example: for copy/text changes, propose the exact final string(s) to use.
+- Acceptance Criteria MUST be objectively checkable and include any exact strings, numbers, or behaviors needed to implement.
+- Keep Open questions to a minimum. Only include items that truly require a human business decision; otherwise decide.
+- Do not invent nonexistent endpoints/services. If backend details are unknown, constrain scope to UI-only or clearly specify what to create.`;
 
   const user = `Target repo: ${targetRepo}\n\nIntake title: ${title}\n\nIntake rough draft (verbatim):\n${roughDraft}`;
 
