@@ -99,6 +99,13 @@ export function readUrl(page, prop) {
   return page.properties?.[prop]?.url ?? "";
 }
 
+// Target repo helper (supports both legacy rich_text and new dropdown select)
+export function readTargetRepo(page) {
+  const fromSelect = readSelect(page, "Target Repo (select)") || readSelect(page, "Target Repo");
+  const fromText = readRichText(page, "Target Repo");
+  return String(fromSelect || fromText || "").trim();
+}
+
 // ─── Update page properties ───────────────────────────────────────────
 
 export async function updatePage(pageId, properties) {

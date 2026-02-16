@@ -16,6 +16,7 @@ import path from "node:path";
 import {
   queryItemsByStatus,
   readRichText,
+  readTargetRepo,
   readTitle,
   readUrl,
   setGitHubIssue,
@@ -70,7 +71,7 @@ async function processIntake(page) {
   const pageId = page.id;
   const title = readTitle(page);
   const roughDraft = readRichText(page, "Rough Draft");
-  const targetRepo = readRichText(page, "Target Repo").trim();
+  const targetRepo = readTargetRepo(page).trim();
   if (!targetRepo) throw new Error(`Missing Target Repo on Notion card ${pageId}`);
 
   // Assign run id if missing
