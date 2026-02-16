@@ -27,13 +27,31 @@ async function notionFetch(url, init = {}) {
 
 // ─── Query items from the Kanban board ────────────────────────────────
 
+let _statusType = null;
+async function getStatusType() {
+  if (_statusType) return _statusType;
+  const dsId = requireEnv("NOTION_DATA_SOURCE_ID");
+  const ds = await notionFetch(`https://api.notion.com/v1/data_sources/${dsId}`);
+  const t = ds?.properties?.Status?.type;
+  if (!t) throw new Error("Could not determine Notion Status property type");
+  _statusType = t; // 'select' or 'status'
+  return _statusType;
+}
+
+function statusFilter(type, op, value) {
+  if (type === "select") return { property: "Status", select: { [op]: value } };
+  if (type === "status") return { property: "Status", status: { [op]: value } };
+  throw new Error(`Unsupported Status property type: ${type}`);
+}
+
 export async function queryItemsByStatus(status) {
   const dsId = requireEnv("NOTION_DATA_SOURCE_ID");
   const max = intEnv("PEREGRINE_MAX_ITEMS", 10);
+  const type = await getStatusType();
   return notionFetch(`https://api.notion.com/v1/data_sources/${dsId}/query`, {
     method: "POST",
     body: JSON.stringify({
-      filter: { property: "Status", status: { equals: status } },
+      filter: statusFilter(type, "equals", status),
       page_size: max,
     }),
   });
@@ -42,15 +60,13 @@ export async function queryItemsByStatus(status) {
 export async function queryAllActive() {
   const dsId = requireEnv("NOTION_DATA_SOURCE_ID");
   const max = intEnv("PEREGRINE_MAX_ITEMS", 10);
+  const type = await getStatusType();
   // Get everything that isn't "Done" or "Error"
   return notionFetch(`https://api.notion.com/v1/data_sources/${dsId}/query`, {
     method: "POST",
     body: JSON.stringify({
       filter: {
-        and: [
-          { property: "Status", status: { does_not_equal: "Done" } },
-          { property: "Status", status: { does_not_equal: "Error" } },
-        ],
+        and: [statusFilter(type, "does_not_equal", "Done"), statusFilter(type, "does_not_equal", "Error")],
       },
       page_size: max,
     }),
@@ -89,7 +105,10 @@ export async function updatePage(pageId, properties) {
 }
 
 export async function setStatus(pageId, status) {
-  return updatePage(pageId, { Status: { status: { name: status } } });
+  const type = await getStatusType();
+  if (type === "select") return updatePage(pageId, { Status: { select: { name: status } } });
+  if (type === "status") return updatePage(pageId, { Status: { status: { name: status } } });
+  throw new Error(`Unsupported Status property type: ${type}`);
 }
 
 export async function setGitHubIssue(pageId, url) {
@@ -122,6 +141,9 @@ export async function setLastError(pageId, text) {
 
 export async function createCard({ title, roughDraft, targetRepo, status = "Intake" }) {
   const dbId = requireEnv("NOTION_DATABASE_ID");
+  const type = await getStatusType();
+  const statusProp = type === "select" ? { select: { name: status } } : { status: { name: status } };
+
   return notionFetch("https://api.notion.com/v1/pages", {
     method: "POST",
     body: JSON.stringify({
@@ -130,7 +152,7 @@ export async function createCard({ title, roughDraft, targetRepo, status = "Inta
         Name: { title: [{ text: { content: title } }] },
         "Rough Draft": { rich_text: [{ text: { content: roughDraft.slice(0, 2000) } }] },
         "Target Repo": { rich_text: [{ text: { content: targetRepo } }] },
-        Status: { status: { name: status } },
+        Status: statusProp,
       },
     }),
   });
