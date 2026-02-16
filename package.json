@@ -1,0 +1,15 @@
+{
+  "name": "peregrine-dashboard-data",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "peregrine:tick": "node ./src/peregrine/tick.mjs",
+    "peregrine:help": "node ./src/peregrine/help.mjs"
+  },
+  "dependencies": {
+    "@octokit/auth-app": "^7.1.1",
+    "@octokit/core": "^6.1.2",
+    "openai": "^4.80.1",
+    "zod": "^3.25.3"
+  }
+}

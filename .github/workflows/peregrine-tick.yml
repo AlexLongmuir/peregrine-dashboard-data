@@ -1,0 +1,49 @@
+name: peregrine-tick
+
+on:
+  workflow_dispatch: {}
+  schedule:
+    - cron: "*/10 * * * *" # every 10 minutes
+
+permissions:
+  contents: write
+
+jobs:
+  tick:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      - name: Run tick
+        env:
+          NOTION_TOKEN: ${{ secrets.NOTION_TOKEN }}
+          NOTION_DATA_SOURCE_ID: ${{ secrets.NOTION_DATA_SOURCE_ID }}
+          NOTION_DATABASE_ID: ${{ secrets.NOTION_DATABASE_ID }}
+          GITHUB_APP_ID: ${{ secrets.GITHUB_APP_ID }}
+          GITHUB_APP_PRIVATE_KEY: ${{ secrets.GITHUB_APP_PRIVATE_KEY }}
+          GITHUB_APP_INSTALLATION_ID: ${{ secrets.GITHUB_APP_INSTALLATION_ID }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          PEREGRINE_MAX_ITEMS: "10"
+          PEREGRINE_REDACT_ARTIFACTS: "true"
+        run: npm run peregrine:tick
+
+      - name: Commit artifacts
+        run: |
+          if [ -n "$(git status --porcelain)" ]; then
+            git config user.email "peregrine-bot@users.noreply.github.com"
+            git config user.name "peregrine-bot"
+            git add runs
+            git commit -m "peregrine: update run artifacts" || true
+            git push
+          else
+            echo "No changes"
+          fi
