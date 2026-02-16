@@ -92,7 +92,7 @@ Output MUST be Markdown with sections:
   return res.choices?.[0]?.message?.content ?? "";
 }
 
-export async function generateEdits({ prdBody, plan, repoFiles, candidateFiles, previousError }) {
+export async function generateEdits({ prdBody, plan, allowedPaths, repoFiles, candidateFiles, previousError }) {
   const openai = client();
   const m = model("OPENAI_MODEL_DEV", "gpt-4.1");
 
@@ -108,7 +108,8 @@ Output MUST be valid JSON with this shape:
 Hard requirements:
 - Provide FULL new content for each file you change.
 - Touch at most 5 files.
-- Only use paths that exist in the repo file list.
+- You MUST choose each path from the ALLOWED_PATHS list provided by the user.
+- Do NOT create new files.
 - No binary files.
 - Prefer minimal changes.
 - If previousError is provided, fix that exact problem.
@@ -118,6 +119,7 @@ Do NOT include markdown fences. JSON only.`;
   const user = [
     `# PRD\n\n${prdBody}`,
     `# Plan\n\n${plan}`,
+    allowedPaths?.length ? `# ALLOWED_PATHS (choose from these ONLY)\n${allowedPaths.join("\n")}` : null,
     `# Repo file list (partial)\n${(repoFiles || []).slice(0, 2000).join("\n")}`,
     candidateFiles ? `# Candidate file contents\n${candidateFiles}` : null,
     previousError ? `# Previous error\n${previousError}` : null,

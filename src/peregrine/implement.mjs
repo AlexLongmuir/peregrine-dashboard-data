@@ -104,20 +104,15 @@ export async function implementFromPrd({ dir, prdBody, plan, maxIters = 2 }) {
   const hints = extractHintsFromPrd(prdBody);
   const grep = grepSnippets(dir, hints);
 
-  const picked = filePathsFromGrep(grep, 8).filter((p) => files.includes(p));
-  const candidateBlocks = [];
-  for (const rel of picked.slice(0, 5)) {
-    const abs = path.join(dir, rel);
-    const c = readFileSafe(abs, 12000);
-    if (c) candidateBlocks.push(`## file: ${rel}\n\n${c}`);
-  }
+  const picked = filePathsFromGrep(grep, 12).filter((p) => files.includes(p));
+  const mustInclude = ["App.tsx", "app/index.tsx", "app/LandingPage.tsx", "components/BenefitsSection.tsx"].filter((p) => files.includes(p));
 
-  // Include a couple likely entrypoints if they exist
-  for (const rel of ["App.tsx", "app/index.tsx", "app/LandingPage.tsx", "components/BenefitsSection.tsx"]) {
-    if (candidateBlocks.length >= 6) break;
-    if (!files.includes(rel)) continue;
+  const allowedPaths = [...new Set([...picked, ...mustInclude])].slice(0, 25);
+
+  const candidateBlocks = [];
+  for (const rel of allowedPaths.slice(0, 8)) {
     const abs = path.join(dir, rel);
-    const c = readFileSafe(abs, 12000);
+    const c = readFileSafe(abs, 14000);
     if (c) candidateBlocks.push(`## file: ${rel}\n\n${c}`);
   }
 
@@ -133,6 +128,7 @@ export async function implementFromPrd({ dir, prdBody, plan, maxIters = 2 }) {
     const edits = await generateEdits({
       prdBody,
       plan,
+      allowedPaths,
       repoFiles: files,
       candidateFiles,
       previousError: lastErr,
@@ -150,7 +146,7 @@ export async function implementFromPrd({ dir, prdBody, plan, maxIters = 2 }) {
       content: String(f.content ?? ""),
     }));
 
-    const invalid = toWrite.find((f) => !f.rel || !files.includes(f.rel));
+    const invalid = toWrite.find((f) => !f.rel || !allowedPaths.includes(f.rel));
     if (invalid) {
       lastErr = `Invalid file path from dev agent: ${invalid.rel}`;
       continue;
