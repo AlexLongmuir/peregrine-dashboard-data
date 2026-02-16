@@ -3,3 +3,5 @@
 - 2026-02-16T10:48:49.330Z **GITHUB** — Created issue https://github.com/AlexLongmuir/regretless-3/issues/20
 - 2026-02-16T10:52:14.487Z **DEV** — Planning
 - 2026-02-16T10:52:46.493Z **GITHUB** — Opened PR https://github.com/AlexLongmuir/regretless-3/pull/21
+- 2026-02-16T11:51:14.658Z **REVIEW** — Reviewing https://github.com/AlexLongmuir/regretless-3/pull/21
+- 2026-02-16T11:51:48.113Z **REVIEW_FAIL** — Needs Changes: https://github.com/AlexLongmuir/regretless-3/pull/21
