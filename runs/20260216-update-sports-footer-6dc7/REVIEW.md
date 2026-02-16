@@ -1,4 +1,4 @@
-# PRD Implementation Review
+# PR Review: Sports Footer Replication
 
 ## Verdict: **FAIL**
 
@@ -8,7 +8,8 @@
 
 ### AC1: Footer matches https://www.spreadex.com/sports/mobile/homepage in layout, icons, text, and colors, pixel-for-pixel on mobile viewports (375px width reference).
 - **Fail**
-  - **Evidence needed:** Visual regression screenshots at 375px width.  
-  - **Observed:** No screenshots or pixel comparison provided. Manual insp
+  - **Evidence Needed:** 
+    - Visual regression test screenshot comparison at 375px width.
+    - Manual inspection shows minor discrep
 
 [REDACTED]

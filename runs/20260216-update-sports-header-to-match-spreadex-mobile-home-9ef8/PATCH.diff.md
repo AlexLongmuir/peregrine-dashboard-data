@@ -1,15 +1,11 @@
-diff --git a/src/app/globals.css b/src/app/globals.css
-index 46e79ed..d20186e 100644
---- a/src/app/globals.css
-+++ b/src/app/globals.css
-@@ -1,33 +1,155 @@
--@import "tailwindcss";
-+/* Global styles for Spreadex Mobile header pixel-perfect match */
-+@import url('https://fonts.googleapis.com/css?family=Arial:400,700&display=swap');
+diff --git a/src/components/mobile/homepage/HomepageView.tsx b/src/components/mobile/homepage/HomepageView.tsx
+index e5f607b..50f6bf7 100644
+--- a/src/components/mobile/homepage/HomepageView.tsx
++++ b/src/components/mobile/homepage/HomepageView.tsx
+@@ -143,13 +143,6 @@ function SpreadexMobileHeader() {
+     <div className="animate-pulse rounded-full bg-gray-200 h-[28px] w-[28px]" />
+   );
  
--:root {
--  --background: #000000;
--  --foreground: #ffffff;
-+html
+-  // 
 
 [REDACTED]

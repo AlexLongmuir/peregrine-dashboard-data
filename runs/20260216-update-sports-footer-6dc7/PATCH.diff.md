@@ -1,9 +1,13 @@
-diff --git a/src/components/mobile/homepage/HomepageView.tsx b/src/components/mobile/homepage/HomepageView.tsx
-index b772d89..b70b8a3 100644
---- a/src/components/mobile/homepage/HomepageView.tsx
-+++ b/src/components/mobile/homepage/HomepageView.tsx
-@@ -12,19 +12,22 @@ import { NextRaces } from "./NextRaces";
- // SVGs extracted from spreadex.com mobile footer (inline for 1:1 match)
- const footerIco
+diff --git a/src/app/(mobile)/layout.tsx b/src/app/(mobile)/layout.tsx
+index 5361c1f..657ca47 100644
+--- a/src/app/(mobile)/layout.tsx
++++ b/src/app/(mobile)/layout.tsx
+@@ -1,10 +1,27 @@
+-import React from "react";
+-import { MobileShell } from "@/components/mobile/MobileShell";
++import "../globals.css";
++import type { Metadata } from "next";
++import { Inter } from "next/font/google";
++import Mobil
 
 [REDACTED]

@@ -2,12 +2,10 @@
 
 
 ```
- src/app/globals.css                             | 166 ++++++++++++++++++++----
- src/components/mobile/homepage/HomepageView.tsx |  52 ++++++--
- 2 files changed, 186 insertions(+), 32 deletions(-)
+ src/components/mobile/homepage/HomepageView.tsx | 62 +++++++++++++++++++++----
+ 1 file changed, 53 insertions(+), 9 deletions(-)
 
 ```
 
 ## Changed files
-- src/app/globals.css
 - src/components/mobile/homepage/HomepageView.tsx
