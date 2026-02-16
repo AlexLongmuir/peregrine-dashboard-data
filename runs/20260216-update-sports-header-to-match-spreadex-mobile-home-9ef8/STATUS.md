@@ -1,0 +1,6 @@
+# STATUS
+- Updated: 2026-02-16T12:35:23.215Z
+- Status: **PRD Drafted**
+- Target repo: `AlexLongmuir/spreadex-mobile-ui`
+- Notion: https://www.notion.so/Update-Sports-Header-to-Match-Spreadex-Mobile-Homepage-30903dbb59038009a3aec53d4483c4be
+- GitHub Issue: https://github.com/AlexLongmuir/spreadex-mobile-ui/issues/2
