@@ -2,10 +2,10 @@
 
 
 ```
- App.tsx | 24 ++++++++++++++++++++++++
- 1 file changed, 24 insertions(+)
+ app/onboarding/welcome.tsx | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
 
 ```
 
 ## Changed files
-- App.tsx
+- app/onboarding/welcome.tsx
