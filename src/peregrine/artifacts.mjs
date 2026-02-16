@@ -50,3 +50,15 @@ export function writeReview({ root, runId, reviewMarkdown, redact = true }) {
   ensureDir(dir);
   writeFile(path.join(dir, "REVIEW.md"), redactIfNeeded(reviewMarkdown, redact));
 }
+
+export function writeImplementation({ root, runId, md, redact = true }) {
+  const dir = runDir(root, runId);
+  ensureDir(dir);
+  writeFile(path.join(dir, "IMPLEMENTATION.md"), redactIfNeeded(md, redact));
+}
+
+export function writePatch({ root, runId, patch, redact = true }) {
+  const dir = runDir(root, runId);
+  ensureDir(dir);
+  writeFile(path.join(dir, "PATCH.diff.md"), redactIfNeeded(patch, redact));
+}

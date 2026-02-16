@@ -31,16 +31,20 @@ import {
   createIssue,
   createPullRequest,
   getIssue,
+  getPullRequest,
+  gitCheckoutBranch,
   gitCheckoutNewBranch,
   gitCommitAll,
   gitConfigUser,
+  gitFetchBranch,
   gitPush,
-  parseRepo,
+  updatePullRequest,
   cloneRepo,
 } from "./github.mjs";
 import { planDev, rewritePrdFromIntake } from "./openai.mjs";
-import { boolEnv, ensureDir, intEnv, newRunId, sh } from "./util.mjs";
-import { writeEvent, writePlan, writePrd, writeStatus } from "./artifacts.mjs";
+import { implementFromPrd } from "./implement.mjs";
+import { boolEnv, ensureDir, intEnv, newRunId } from "./util.mjs";
+import { writeEvent, writeImplementation, writePatch, writePlan, writePrd, writeStatus } from "./artifacts.mjs";
 
 const ROOT = process.cwd();
 const REDACT = boolEnv("PEREGRINE_REDACT_ARTIFACTS", true);
@@ -105,14 +109,17 @@ async function processIntake(page) {
 
 async function processReadyForDev(page) {
   const pageId = page.id;
-  const targetRepo = readRichText(page, "Target Repo").trim();
   const issueUrl = readUrl(page, "GitHub Issue");
+  const existingPrUrl = readUrl(page, "GitHub PR");
   const runId = readRichText(page, "Run ID") || newRunId(readTitle(page));
   await setRunId(pageId, runId);
 
   const issueRef = parseIssueFromUrl(issueUrl);
   if (!issueRef) throw new Error(`Missing or invalid GitHub Issue URL on card: ${issueUrl}`);
   const repo = `${issueRef.owner}/${issueRef.repo}`;
+
+  // Mark in progress
+  await setStatus(pageId, "In Dev");
 
   // Pull PRD from GitHub issue body
   const issue = await getIssue({ repo, issueNumber: issueRef.number });
@@ -122,15 +129,74 @@ async function processReadyForDev(page) {
   const plan = await planDev({ prdBody });
   writePlan({ root: ROOT, runId, planMarkdown: plan, redact: REDACT });
 
-  // Create a scaffolding PR in the target repo.
-  // NOTE: This does NOT implement code changes yet; it creates a branch + adds docs/peregrine/<runId>.md
+  // Clone target repo
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), `peregrine-${runId}-`));
   await cloneRepo({ repo, dir: tmp });
   gitConfigUser({ dir: tmp });
 
-  const branch = `peregrine/${runId}`;
-  gitCheckoutNewBranch({ dir: tmp, branch });
+  // Reuse existing PR branch if present
+  let pr = null;
+  let branch = `peregrine/${runId}`;
+  const prRef = parsePrFromUrl(existingPrUrl);
+  if (prRef) {
+    pr = await getPullRequest({ repo, prNumber: prRef.number });
+    branch = pr.head?.ref || branch;
+    // fetch and checkout branch
+    gitFetchBranch({ dir: tmp, branch });
+    gitCheckoutBranch({ dir: tmp, branch });
+  } else {
+    gitCheckoutNewBranch({ dir: tmp, branch });
+  }
 
+  // Implement actual code changes
+  writeEvent({ root: ROOT, runId, kind: "DEV", text: `Implementing`, redact: REDACT });
+  let impl;
+  try {
+    impl = await implementFromPrd({ dir: tmp, prdBody, plan, maxIters: 2 });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    await setLatestFeedback(pageId, msg);
+    await setStatus(pageId, "Needs Changes");
+    writeEvent({ root: ROOT, runId, kind: "DEV_FAIL", text: msg, redact: true });
+    writeStatus({
+      root: ROOT,
+      runId,
+      status: "Needs Changes",
+      repo,
+      notionUrl: notionPageUrl(page),
+      issueUrl: issue.html_url,
+      prUrl: existingPrUrl || "",
+      redact: REDACT,
+    });
+    return;
+  }
+
+  if (!impl.ok) {
+    await setLatestFeedback(pageId, impl.error || "Implementation failed");
+    await setStatus(pageId, "Needs Changes");
+    writeEvent({ root: ROOT, runId, kind: "DEV_FAIL", text: impl.error || "Implementation failed", redact: true });
+    writeStatus({
+      root: ROOT,
+      runId,
+      status: "Needs Changes",
+      repo,
+      notionUrl: notionPageUrl(page),
+      issueUrl: issue.html_url,
+      prUrl: existingPrUrl || "",
+      redact: REDACT,
+    });
+    return;
+  }
+
+  writePatch({ root: ROOT, runId, patch: impl.patch, redact: true });
+  writeImplementation({
+    root: ROOT,
+    runId,
+    md: `## Diff stat\n\n\n\`\`\`\n${impl.diffStat}\n\`\`\`\n\n## Changed files\n${impl.changedFiles.map((f) => `- ${f}`).join("\n")}\n`,
+    redact: REDACT,
+  });
+
+  // Write a run doc into the repo (optional but useful)
   const docPath = path.join(tmp, "docs", "peregrine");
   ensureDir(docPath);
   fs.writeFileSync(
@@ -138,18 +204,25 @@ async function processReadyForDev(page) {
     `# Peregrine run ${runId}\n\nIssue: ${issue.html_url}\n\n## Plan\n\n${plan}\n`
   );
 
-  gitCommitAll({ dir: tmp, message: `peregrine: plan for ${runId}` });
+  // Commit + push
+  gitCommitAll({ dir: tmp, message: `peregrine: implement ${runId}` });
   await gitPush({ dir: tmp, branch, repo });
 
-  const prTitle = `[peregrine] ${issue.title}`;
-  const prBody = `Implements: ${issue.html_url}\n\nArtifacts: (see peregrine-dashboard-data/runs/${runId})\n\n## Manual test script\n- TODO\n\n## EAS Preview\n- TODO\n\n## AC checklist\n- [ ] AC1\n`;
+  // Create PR if needed
+  if (!pr) {
+    const prTitle = `[peregrine] ${issue.title}`;
+    const prBody = `Implements: ${issue.html_url}\n\nArtifacts: (see peregrine-dashboard-data/runs/${runId})\n\n## Manual test script\n- TODO\n\n## EAS Preview\n- TODO\n\n## AC checklist\n- [ ] AC1\n`;
 
-  const pr = await createPullRequest({ repo, head: branch, base: "main", title: prTitle, body: prBody });
-  await setGitHubPR(pageId, pr.html_url);
+    pr = await createPullRequest({ repo, head: branch, base: "main", title: prTitle, body: prBody });
+    await setGitHubPR(pageId, pr.html_url);
+    await commentOnIssue({ repo, issueNumber: issueRef.number, body: `Peregrine opened PR: ${pr.html_url}` });
+    writeEvent({ root: ROOT, runId, kind: "GITHUB", text: `Opened PR ${pr.html_url}`, redact: REDACT });
+  } else {
+    // ensure Notion has PR url
+    if (!existingPrUrl) await setGitHubPR(pageId, pr.html_url);
+  }
 
-  writeEvent({ root: ROOT, runId, kind: "GITHUB", text: `Opened PR ${pr.html_url}`, redact: REDACT });
-  await commentOnIssue({ repo, issueNumber: issueRef.number, body: `Peregrine opened PR: ${pr.html_url}` });
-
+  await setLatestFeedback(pageId, `Pushed code changes to ${pr.html_url}`);
   await setStatus(pageId, "In Review");
   writeStatus({
     root: ROOT,

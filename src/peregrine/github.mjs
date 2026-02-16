@@ -98,6 +98,30 @@ export async function createPullRequest({ repo, head, base = "main", title, body
   return res.data; // html_url, number
 }
 
+export async function getPullRequest({ repo, prNumber }) {
+  const { owner, repo: name } = parseRepo(repo);
+  const octokit = getOctokit();
+  const res = await octokit.request("GET /repos/{owner}/{repo}/pulls/{pull_number}", {
+    owner,
+    repo: name,
+    pull_number: prNumber,
+  });
+  return res.data;
+}
+
+export async function updatePullRequest({ repo, prNumber, title, body }) {
+  const { owner, repo: name } = parseRepo(repo);
+  const octokit = getOctokit();
+  const res = await octokit.request("PATCH /repos/{owner}/{repo}/pulls/{pull_number}", {
+    owner,
+    repo: name,
+    pull_number: prNumber,
+    ...(title ? { title } : {}),
+    ...(body ? { body } : {}),
+  });
+  return res.data;
+}
+
 export async function commentOnIssue({ repo, issueNumber, body }) {
   const { owner, repo: name } = parseRepo(repo);
   const octokit = getOctokit();
@@ -124,6 +148,14 @@ export function gitConfigUser({ dir }) {
 
 export function gitCheckoutNewBranch({ dir, branch }) {
   sh("git", ["-C", dir, "checkout", "-b", branch]);
+}
+
+export function gitFetchBranch({ dir, branch }) {
+  sh("git", ["-C", dir, "fetch", "origin", `${branch}:${branch}`]);
+}
+
+export function gitCheckoutBranch({ dir, branch }) {
+  sh("git", ["-C", dir, "checkout", branch]);
 }
 
 export function gitCommitAll({ dir, message }) {

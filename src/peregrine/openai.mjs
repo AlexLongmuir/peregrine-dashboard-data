@@ -92,6 +92,49 @@ Output MUST be Markdown with sections:
   return res.choices?.[0]?.message?.content ?? "";
 }
 
+export async function generatePatch({ prdBody, plan, repoFiles, grepSnippets, fileProbes, previousError }) {
+  const openai = client();
+  const m = model("OPENAI_MODEL_DEV", "gpt-4.1");
+
+  const system = `You are a senior engineer working in a repo. You will output ONE unified diff patch that implements the PRD.
+
+Hard requirements:
+- Output ONLY a unified diff (starts with 'diff --git'). No prose.
+- Touch at most 5 files.
+- No binaries.
+- Prefer minimal change.
+- Do not change docs/peregrine/* unless also changing real code.
+- If prior error is provided, fix that exact problem.
+
+Repo context:
+- This is an Expo + React Native + TypeScript app with a Next.js backend in backend/.
+- You may need to locate the landing page component and update copy.
+
+If you cannot confidently implement, output an empty diff that changes nothing.`;
+
+  const user = [
+    `# PRD\n\n${prdBody}`,
+    `# Plan\n\n${plan}`,
+    `# Repo file list (partial)\n${(repoFiles || []).slice(0, 1500).join("\n")}`,
+    grepSnippets ? `# Grep snippets\n${grepSnippets}` : null,
+    fileProbes ? `# File probes\n${fileProbes}` : null,
+    previousError ? `# Previous error\n${previousError}` : null,
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+
+  const res = await openai.chat.completions.create({
+    model: m,
+    temperature: 0.1,
+    messages: [
+      { role: "system", content: system },
+      { role: "user", content: user },
+    ],
+  });
+
+  return res.choices?.[0]?.message?.content ?? "";
+}
+
 export async function reviewAgainstPrd({ prdBody, prDiffSummary, prBody }) {
   const openai = client();
   const m = model("OPENAI_MODEL_REVIEW", "gpt-4.1");
