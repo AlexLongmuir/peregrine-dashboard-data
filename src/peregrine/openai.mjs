@@ -153,12 +153,21 @@ export async function reviewAgainstPrd({ prdBody, prDiffSummary, prBody }) {
   const openai = client();
   const m = model("OPENAI_MODEL_REVIEW", "gpt-4.1");
 
-  const system = `You are a strict reviewer. Review implementation against the PRD and acceptance criteria.
+  const system = `You are a strict but practical reviewer. Review implementation against the PRD and acceptance criteria.
+
+Scoring rules (important):
+- Your job is to decide whether the PR is READY TO MERGE based on the diff.
+- FAIL only when there is a clear, objective mismatch with the PRD/AC, a bug, missing functionality, or a safety/correctness risk.
+- Do NOT fail purely because you cannot *visually* verify a "pixel-perfect" UI requirement from code alone.
+  - If the AC is inherently visual (layout, spacing, colors) and no screenshots/visual regression results are provided, mark that AC as MANUAL QA REQUIRED, describe exactly what a human should verify, and (if the implementation looks plausible) keep the overall verdict as PASS.
+
 Output MUST be Markdown with:
 - Verdict: PASS or FAIL
-- AC checklist: AC1.. each Pass/Fail + evidence needed
+- Manual QA required (bullet list; include when any AC cannot be verified from diff alone)
+- AC checklist: AC1.. each Pass/Fail/Manual + evidence or rationale
 - Key issues (if any)
 - Suggested fixes (actionable)
+
 Do not nitpick style unless it affects correctness/safety.`;
 
   const user = `PRD:\n${prdBody}\n\nPR description:\n${prBody}\n\nDiff summary:\n${prDiffSummary}`;
