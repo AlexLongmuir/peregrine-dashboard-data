@@ -10,6 +10,6 @@ No changes to layout, styling, or other benefit texts. No backend/API impact.
 ## Steps
 
 1. **Locate Benefit 3 Text**
-   - Identify the file/component where Benefit 3's text is defi
+   - Identify where Benefit 3 is rendered in the landing page c
 
 [REDACTED]
