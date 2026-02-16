@@ -21,7 +21,7 @@ export function writeStatus({ root, runId, status, repo, notionUrl, issueUrl, pr
     ``,
     `- Updated: ${nowIso()}`,
     `- Status: **${status}**`,
-    repo ? `- Target repo: \\`${repo}\\`` : null,
+    repo ? "- Target repo: `" + repo + "`" : null,
     notionUrl ? `- Notion: ${notionUrl}` : null,
     issueUrl ? `- GitHub Issue: ${issueUrl}` : null,
     prUrl ? `- GitHub PR: ${prUrl}` : null,
