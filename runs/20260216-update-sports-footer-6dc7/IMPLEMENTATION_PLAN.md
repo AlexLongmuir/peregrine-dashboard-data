@@ -2,13 +2,13 @@
 
 ## Summary
 
-We will replace the current mobile sports footer with an exact replica of the Spreadex mobile homepage footer, matching its HTML, CSS, and interactive behavior. The implementation will ensure pixel-perfect accuracy, accessibility, responsiveness, and error/offline handling as per the PRD.
+Replicate the sports footer from https://www.spreadex.com/sports/mobile/homepage in our mobile UI, matching the reference exactly in layout, icons, text, colors, spacing, and interactivity. Ensure responsiveness, accessibility, and error handling as specified.
 
 ---
 
 ## Steps
 
 1. **Reference Analysis**
- 
+   - Take high-resolution scre
 
 [REDACTED]
