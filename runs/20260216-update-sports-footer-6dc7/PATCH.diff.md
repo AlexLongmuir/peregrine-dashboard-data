@@ -1,12 +1,9 @@
 diff --git a/src/components/mobile/homepage/HomepageView.tsx b/src/components/mobile/homepage/HomepageView.tsx
-index dceb221..b772d89 100644
+index b772d89..b70b8a3 100644
 --- a/src/components/mobile/homepage/HomepageView.tsx
 +++ b/src/components/mobile/homepage/HomepageView.tsx
-@@ -1,4 +1,4 @@
--import React from "react";
-+import React, { useState } from "react";
- 
- import { WarningText } from "./WarningText";
- import { SportsC
+@@ -12,19 +12,22 @@ import { NextRaces } from "./NextRaces";
+ // SVGs extracted from spreadex.com mobile footer (inline for 1:1 match)
+ const footerIco
 
 [REDACTED]

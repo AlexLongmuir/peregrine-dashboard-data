@@ -1,12 +1,15 @@
-diff --git a/src/components/mobile/homepage/HomepageView.tsx b/src/components/mobile/homepage/HomepageView.tsx
-index dceb221..637fae6 100644
---- a/src/components/mobile/homepage/HomepageView.tsx
-+++ b/src/components/mobile/homepage/HomepageView.tsx
-@@ -1,5 +1,4 @@
--import React from "react";
--
-+import React, { useState } from "react";
- import { WarningText } from "./WarningText";
- import { SportsC
+diff --git a/src/app/globals.css b/src/app/globals.css
+index 46e79ed..d20186e 100644
+--- a/src/app/globals.css
++++ b/src/app/globals.css
+@@ -1,33 +1,155 @@
+-@import "tailwindcss";
++/* Global styles for Spreadex Mobile header pixel-perfect match */
++@import url('https://fonts.googleapis.com/css?family=Arial:400,700&display=swap');
+ 
+-:root {
+-  --background: #000000;
+-  --foreground: #ffffff;
++html
 
 [REDACTED]
