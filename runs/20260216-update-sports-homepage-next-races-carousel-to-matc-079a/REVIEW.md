@@ -1,10 +1,8 @@
 Verdict: FAIL
 
 ## Manual QA required
-- Visual parity vs Spreadex reference (layout/spacing/typography/colors/icons/animations) **once** the functional gaps below are fixed.
-- Confirm chevrons exist/behave exactly like reference (if reference has them) after implementation is added.
-- Confirm mobile-only behavior in responsive breakpoints on real devices (once gating is corrected/verified).
-
-## AC 
+- Visual parity vs Spreadex reference (layout, spacing, typography, colors, icons, transitions, chevrons presence/behavior) on real mobile devices.
+- Touch scrolling feel (momentum, snap, overscroll) and chevron behavior (if implemented) compared to reference.
+- Focus styles visibility on mobile + external keyboard (iOS/Android) to confirm “visible focus states
 
 [REDACTED]

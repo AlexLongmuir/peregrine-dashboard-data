@@ -1,12 +1,14 @@
-diff --git a/src/components/mobile/homepage/HomepageView.tsx b/src/components/mobile/homepage/HomepageView.tsx
-index 3484aed..22fef4c 100644
---- a/src/components/mobile/homepage/HomepageView.tsx
-+++ b/src/components/mobile/homepage/HomepageView.tsx
-@@ -1,3 +1,5 @@
-+"use client";
-+
- import React, { useState } from "react";
- import { WarningText } from "./WarningText";
- import { SportsCategories } f
+diff --git a/src/components/mobile/homepage/NextRaces.tsx b/src/components/mobile/homepage/NextRaces.tsx
+index 1d8370b..e1a6689 100644
+--- a/src/components/mobile/homepage/NextRaces.tsx
++++ b/src/components/mobile/homepage/NextRaces.tsx
+@@ -105,11 +105,38 @@ function SkeletonCard() {
+   );
+ }
+ 
++function ChevronIcon({ direction }: { direction: "left" | "right" }) {
++  return (
++    <svg
++      vie
 
 [REDACTED]
