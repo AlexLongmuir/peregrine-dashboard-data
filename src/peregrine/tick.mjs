@@ -130,7 +130,7 @@ function teamAllowsProcess(page) {
   if (!TEAM_MODE) return true;
   if (readCheckbox(page, TEAM_IS_TEMPLATE_PROP)) return false;
   const stage = readSelect(page, TEAM_STAGE_PROP);
-  if (!stage) return true;
+  if (!stage) return false;
   return stage === "Approved" || stage === "In Progress";
 }
 
