@@ -1,0 +1,1 @@
+- 2026-02-17T08:05:11.439Z **INTAKE** — Notion intake received: Vercel deployment failing after merging Header (spreadex-mobile-ui)
