@@ -1,7 +1,7 @@
 ## Work packages
 
-- 1. **Carousel UI parity (base)** — Rebuild the Next Races carousel markup/styles/behavior to match the Spreadex mobile reference for the happy path.
-- 2. **States (loading/empty/error/offline) + retry** — Implement skeleton loading and all non-happy-path states to match the reference, including Retry behavior for error/offline.
-- 3. **Accessibility + telemetry + tests** — Add a
+- 1. **Replica UI shell (markup/CSS)** — Rebuild the Next Races carousel UI structure and styling to match the Spreadex mobile reference while keeping existing data wiring minimal.
+- 2. **Behavior + states (scroll, chevrons, skeleton, empty/error/offline)** — Implement carousel interactions and all loading/empty/error/offline UI states to match the reference behavior and copy.
+- 
 
 [REDACTED]

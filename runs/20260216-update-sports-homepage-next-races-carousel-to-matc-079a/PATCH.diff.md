@@ -1,14 +1,11 @@
 diff --git a/src/components/mobile/homepage/NextRaces.tsx b/src/components/mobile/homepage/NextRaces.tsx
-index 1d8370b..e1a6689 100644
+index e1a6689..4e36dd1 100644
 --- a/src/components/mobile/homepage/NextRaces.tsx
 +++ b/src/components/mobile/homepage/NextRaces.tsx
-@@ -105,11 +105,38 @@ function SkeletonCard() {
-   );
- }
+@@ -53,6 +53,9 @@ type Mixpanel = {
+   track: (event: string, props?: Record<string, unknown>) => void;
+ };
  
-+function ChevronIcon({ direction }: { direction: "left" | "right" }) {
-+  return (
-+    <svg
-+      vie
++const EMPTY_MESSAGE = "No upcoming races at this tim
 
 [REDACTED]
