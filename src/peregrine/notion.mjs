@@ -194,6 +194,9 @@ export async function setStatus(pageId, status) {
   try {
     return await updatePage(pageId, { Status: { select: { name: status } } });
   } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    // Only fall back when the database uses a Status (status) property.
+    if (!msg.includes("Status is expected to be status")) throw e;
     return await updatePage(pageId, { Status: { status: { name: status } } });
   }
 }
@@ -235,34 +238,47 @@ export async function setRelation(pageId, prop, pageIds) {
 export async function createCard({ title, roughDraft, targetRepo, status = "Intake", extraProperties = {} }) {
   const dbId = requireEnv("NOTION_DATABASE_ID");
 
-  // Prefer select; fallback to status.
+  // Avoid writing to removed legacy properties.
+  // Prefer the dropdown property ("Target Repo (select)") if present, otherwise fall back gracefully.
+  let ds = null;
   try {
-    return await notionFetch("https://api.notion.com/v1/pages", {
-      method: "POST",
-      body: JSON.stringify({
-        parent: { database_id: dbId },
-        properties: {
-          Name: { title: [{ text: { content: title } }] },
-          "Rough Draft": { rich_text: [{ text: { content: roughDraft.slice(0, 2000) } }] },
-          "Target Repo": { rich_text: [{ text: { content: targetRepo } }] },
-          Status: { select: { name: status } },
-          ...extraProperties,
-        },
-      }),
-    });
-  } catch (e) {
-    return await notionFetch("https://api.notion.com/v1/pages", {
-      method: "POST",
-      body: JSON.stringify({
-        parent: { database_id: dbId },
-        properties: {
-          Name: { title: [{ text: { content: title } }] },
-          "Rough Draft": { rich_text: [{ text: { content: roughDraft.slice(0, 2000) } }] },
-          "Target Repo": { rich_text: [{ text: { content: targetRepo } }] },
-          Status: { status: { name: status } },
-          ...extraProperties,
-        },
-      }),
-    });
+    ds = await getDataSource();
+  } catch {
+    // ignore; we'll fall back to best-effort property names
   }
+
+  const dsProps = ds?.properties ?? {};
+  const statusKind = dsProps?.Status?.type === "status" ? "status" : "select";
+
+  const targetRepoProp =
+    dsProps["Target Repo (select)"]?.type === "select"
+      ? { name: "Target Repo (select)", type: "select" }
+      : dsProps["Target Repo"]?.type === "select"
+        ? { name: "Target Repo", type: "select" }
+        : dsProps["Target Repo"]?.type === "rich_text"
+          ? { name: "Target Repo", type: "rich_text" }
+          : null;
+
+  const properties = {
+    Name: { title: [{ text: { content: String(title || "").slice(0, 250) } }] },
+    "Rough Draft": { rich_text: [{ text: { content: String(roughDraft || "").slice(0, 2000) } }] },
+    ...(targetRepo && targetRepoProp
+      ? {
+          [targetRepoProp.name]:
+            targetRepoProp.type === "select"
+              ? { select: { name: String(targetRepo) } }
+              : { rich_text: [{ text: { content: String(targetRepo).slice(0, 2000) } }] },
+        }
+      : {}),
+    Status: statusKind === "status" ? { status: { name: status } } : { select: { name: status } },
+    ...extraProperties,
+  };
+
+  return notionFetch("https://api.notion.com/v1/pages", {
+    method: "POST",
+    body: JSON.stringify({
+      parent: { database_id: dbId },
+      properties,
+    }),
+  });
 }
