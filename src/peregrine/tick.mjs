@@ -12,9 +12,11 @@
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import crypto from "node:crypto";
 
 import {
   createCard,
+  ensureProperties,
   ensureSelectOptions,
   queryItemsByName,
   queryItemsByStatus,
@@ -23,6 +25,7 @@ import {
   readNumber,
   readRelationIds,
   readRichText,
+  readSelect,
   readTargetRepo,
   readTitle,
   readUrl,
@@ -41,6 +44,7 @@ import {
   ensureOriginToken,
   getIssue,
   getPullRequest,
+  mergePullRequest,
   listInstallationRepos,
   gitCheckoutBranch,
   gitCheckoutNewBranch,
@@ -53,10 +57,14 @@ import {
 } from "./github.mjs";
 import { planDev, rewritePrdFromIntake, reviewAgainstPrd, scopeTriageFromIntake, scopeTriageFromPrd } from "./openai.mjs";
 import { implementFromPrd } from "./implement.mjs";
-import { boolEnv, ensureDir, intEnv, newRunId, sh } from "./util.mjs";
+import { boolEnv, ensureDir, intEnv, newRunId, readFileIfExists, writeFile, sh } from "./util.mjs";
 import { writeEvent, writeImplementation, writePatch, writePlan, writePrd, writeReview, writeScope, writeStatus } from "./artifacts.mjs";
 
 const ROOT = process.cwd();
+const WORKSPACE = path.resolve(ROOT, "..");
+const AUTOHEAL_STATE_PATH = path.join(WORKSPACE, ".tmp", "peregrine_autoheal_state.json");
+const AUTOHEAL_ENABLED = boolEnv("PEREGRINE_AUTOHEAL", true);
+const AUTOHEAL_MAX_ITEMS = intEnv("PEREGRINE_AUTOHEAL_MAX_ITEMS", 25);
 const REDACT = boolEnv("PEREGRINE_REDACT_ARTIFACTS", true);
 const MAX_PACKAGES = intEnv("PEREGRINE_MAX_PACKAGES", 10);
 const INTAKE_AUTOSPLIT = boolEnv("PEREGRINE_INTAKE_AUTOSPLIT", false);
@@ -81,6 +89,131 @@ function parsePrFromUrl(url) {
   return { owner: m[1], repo: m[2], number: Number(m[3]) };
 }
 
+const REQUIRED_STATUSES = [
+  "Intake",
+  "PRD Drafted",
+  "Ready for Dev",
+  "In Dev",
+  "In Review",
+  "Needs Changes",
+  "Ready to Merge",
+  "Done",
+  "Error",
+  EPIC_STATUS,
+];
+
+// Control card properties (live on the same Notion Kanban database)
+const CONTROL_WORK_SESSION_ENABLED = "Work Session Enabled";
+const CONTROL_WORK_SESSION_ENDS_AT = "Work Session Ends At";
+const CONTROL_WORK_SESSION_ACTION_BUDGET = "Work Session LLM Action Budget";
+const CONTROL_WORK_SESSION_ACTIONS_USED = "Work Session LLM Actions Used";
+const CONTROL_WORK_SESSION_MAX_ITEMS = "Work Session Max Items/Tick";
+const CONTROL_WORK_SESSION_MAX_LLM_ACTIONS = "Work Session Max LLM Actions/Tick";
+
+// Card-level merge gate
+const MERGE_REQUESTED_PROP = "Merge Requested";
+const MERGE_APPROVED_PROP = "Merge Approved";
+const MERGE_METHOD_PROP = "Merge Method";
+
+function autohealSig(text) {
+  const t = String(text || "").trim();
+  return crypto.createHash("sha1").update(t.slice(0, 4000)).digest("hex").slice(0, 12);
+}
+
+function loadAutohealState() {
+  const raw = readFileIfExists(AUTOHEAL_STATE_PATH);
+  if (!raw) return { version: 1, pages: {} };
+  try {
+    const j = JSON.parse(raw);
+    if (!j || typeof j !== "object") return { version: 1, pages: {} };
+    if (!j.pages || typeof j.pages !== "object") j.pages = {};
+    return j;
+  } catch {
+    return { version: 1, pages: {} };
+  }
+}
+
+function saveAutohealState(state) {
+  // Best-effort write; never let this crash the tick.
+  try {
+    writeFile(AUTOHEAL_STATE_PATH, JSON.stringify(state, null, 2) + "\\n");
+  } catch {
+    // ignore
+  }
+}
+
+function recordErrorForAutoheal({ pageId, stage, errorText }) {
+  if (!AUTOHEAL_ENABLED) return;
+  const state = loadAutohealState();
+  const pages = state.pages || (state.pages = {});
+  const entry = pages[pageId] || (pages[pageId] = { autoheal: {} });
+
+  entry.lastStage = stage || entry.lastStage || "";
+  entry.lastErrorSig = autohealSig(errorText);
+  entry.lastError = String(errorText || "").slice(0, 800);
+  entry.lastSeenAt = new Date().toISOString();
+
+  saveAutohealState(state);
+}
+
+function shouldAttemptAutoheal({ pageId, sig }) {
+  if (!AUTOHEAL_ENABLED) return false;
+  const state = loadAutohealState();
+  const entry = state.pages?.[pageId];
+  const prior = entry?.autoheal?.[sig];
+  return !prior?.attemptedAt;
+}
+
+function markAutohealAttempt({ pageId, sig, result }) {
+  const state = loadAutohealState();
+  const pages = state.pages || (state.pages = {});
+  const entry = pages[pageId] || (pages[pageId] = { autoheal: {} });
+  entry.autoheal = entry.autoheal || {};
+  entry.autoheal[sig] = {
+    attemptedAt: new Date().toISOString(),
+    ...(result || {}),
+  };
+  saveAutohealState(state);
+}
+
+function inferRecoveredStatus(page, stage) {
+  const issueUrl = readUrl(page, "GitHub Issue");
+  const prUrl = readUrl(page, "GitHub PR");
+  const hasIssue = Boolean(parseIssueFromUrl(issueUrl));
+  const hasPr = Boolean(parsePrFromUrl(prUrl));
+
+  if (hasPr) return "In Review";
+
+  if (hasIssue) {
+    if (stage === "Ready for Dev" || stage === "Needs Changes") return stage;
+    // If we made it far enough to create an issue, the safest recovery is PRD Drafted.
+    return "PRD Drafted";
+  }
+
+  return "Intake";
+}
+
+function looksLikeNotionMissingSelectOption(errText) {
+  const t = String(errText || "");
+  if (!t.toLowerCase().includes("notion")) return false;
+  // Notion's validation error bodies vary; keep this broad but conservative.
+  const hasStatus = /Status/.test(t) || t.includes('"Status"');
+  const looksLikeOption = t.toLowerCase().includes("select") && (t.toLowerCase().includes("option") || t.toLowerCase().includes("equals"));
+  return hasStatus && looksLikeOption;
+}
+
+function looksLikeOpenAiQuotaOrAuth(errText) {
+  const t = String(errText || "").toLowerCase();
+  return (
+    t.includes("insufficient_quota") ||
+    t.includes("you exceeded your current quota") ||
+    t.includes("invalid_api_key") ||
+    t.includes("incorrect api key") ||
+    t.includes("401") && t.includes("openai") ||
+    t.includes("429") && t.includes("openai")
+  );
+}
+
 async function processIntake(page) {
   const pageId = page.id;
   const title = readTitle(page);
@@ -88,11 +221,31 @@ async function processIntake(page) {
   const targetRepo = readTargetRepo(page).trim();
   if (!targetRepo) throw new Error(`Missing Target Repo on Notion card ${pageId}`);
 
+  const existingIssueUrl = readUrl(page, "GitHub Issue").trim();
+
   // Assign run id if missing
   const runId = readRichText(page, "Run ID") || newRunId(title);
   await setRunId(pageId, runId);
 
   writeEvent({ root: ROOT, runId, kind: "INTAKE", text: `Notion intake received: ${title}`, redact: REDACT });
+
+  // Idempotency guard: if an issue already exists, don't create duplicates.
+  // This commonly happens when the run created the issue but failed to move status due to a Notion schema/config error.
+  if (existingIssueUrl && parseIssueFromUrl(existingIssueUrl)) {
+    await setLatestFeedback(pageId, `Detected existing GitHub Issue; skipping PRD/Issue creation and advancing to PRD Drafted. (${existingIssueUrl})`);
+    await setStatus(pageId, "PRD Drafted");
+    writeStatus({
+      root: ROOT,
+      runId,
+      status: "PRD Drafted",
+      repo: targetRepo,
+      notionUrl: notionPageUrl(page),
+      issueUrl: existingIssueUrl,
+      prUrl: "",
+      redact: REDACT,
+    });
+    return;
+  }
 
   const hasParentRel = Boolean(page?.properties?.[PARENT_REL_PROP]?.type === "relation" || page?.properties?.[PARENT_REL_PROP]?.relation);
   const hasChildrenRel = Boolean(page?.properties?.[CHILDREN_REL_PROP]?.type === "relation" || page?.properties?.[CHILDREN_REL_PROP]?.relation);
@@ -145,6 +298,7 @@ async function processIntake(page) {
     writeEvent({ root: ROOT, runId, kind: "SCOPE", text: `Scope triage: ${scope.decision || ""}`, redact: REDACT });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+    recordErrorForAutoheal({ pageId, stage, errorText: msg });
     writeEvent({ root: ROOT, runId, kind: "SCOPE_FAIL", text: msg, redact: true });
   }
 
@@ -325,6 +479,7 @@ async function processReadyForDev(page, { humanFeedback = "" } = {}) {  // human
     writeEvent({ root: ROOT, runId, kind: "SCOPE_DEV", text: `Dev scope: ${devScope.decision || ""} (${(devScope.packages || []).length} pkgs)`, redact: REDACT });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+    recordErrorForAutoheal({ pageId, stage, errorText: msg });
     writeEvent({ root: ROOT, runId, kind: "SCOPE_DEV_FAIL", text: msg, redact: true });
   }
 
@@ -362,6 +517,7 @@ async function processReadyForDev(page, { humanFeedback = "" } = {}) {  // human
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+    recordErrorForAutoheal({ pageId, stage, errorText: msg });
     await setLatestFeedback(pageId, msg);
     await setStatus(pageId, "Needs Changes");
     writeEvent({ root: ROOT, runId, kind: "DEV_FAIL", text: msg, redact: true });
@@ -492,6 +648,14 @@ async function processNeedsChanges(page) {
 
     await setLatestFeedback(pageId, "Review PASS (from Latest Feedback) — marked Ready to Merge");
     await setStatus(pageId, "Ready to Merge");
+    try {
+      await updatePage(pageId, {
+        [MERGE_REQUESTED_PROP]: { checkbox: true },
+        [MERGE_APPROVED_PROP]: { checkbox: false },
+      });
+    } catch {
+      // ignore
+    }
     writeStatus({
       root: ROOT,
       runId,
@@ -582,6 +746,14 @@ async function processInReview(page) {
   if (verdict === "PASS") {
     await setLatestFeedback(pageId, "Review PASS — marked Ready to Merge");
     await setStatus(pageId, "Ready to Merge");
+    try {
+      await updatePage(pageId, {
+        [MERGE_REQUESTED_PROP]: { checkbox: true },
+        [MERGE_APPROVED_PROP]: { checkbox: false },
+      });
+    } catch {
+      // ignore
+    }
     writeStatus({
       root: ROOT,
       runId,
@@ -634,6 +806,14 @@ async function processReadyToMerge(page) {
   if (pr.merged_at) {
     await setLatestFeedback(pageId, `Merged (${pr.merged_at}) — marked Done`);
     await setStatus(pageId, "Done");
+    try {
+      await updatePage(pageId, {
+        [MERGE_REQUESTED_PROP]: { checkbox: false },
+        [MERGE_APPROVED_PROP]: { checkbox: false },
+      });
+    } catch {
+      // ignore
+    }
     writeStatus({
       root: ROOT,
       runId,
@@ -646,6 +826,49 @@ async function processReadyToMerge(page) {
     });
     writeEvent({ root: ROOT, runId, kind: "MERGED", text: `Merged: ${pr.html_url}`, redact: REDACT });
     return;
+  }
+
+  // If approved for merge, attempt the merge (default method: squash).
+  const mergeApproved = readCheckbox(page, MERGE_APPROVED_PROP);
+  if (mergeApproved) {
+    const methodRaw = (readSelect(page, MERGE_METHOD_PROP) || "squash").toLowerCase();
+    const mergeMethod = methodRaw === "merge" || methodRaw === "rebase" || methodRaw === "squash" ? methodRaw : "squash";
+
+    try {
+      const res = await mergePullRequest({ repo, prNumber: prRef.number, mergeMethod });
+      if (res?.merged) {
+        await setLatestFeedback(pageId, `Merged via ${mergeMethod} — marked Done`);
+        await setStatus(pageId, "Done");
+        try {
+          await updatePage(pageId, {
+            [MERGE_REQUESTED_PROP]: { checkbox: false },
+            [MERGE_APPROVED_PROP]: { checkbox: false },
+          });
+        } catch {
+          // ignore
+        }
+        writeStatus({
+          root: ROOT,
+          runId,
+          status: "Done",
+          repo,
+          notionUrl: notionPageUrl(page),
+          issueUrl: issue.html_url,
+          prUrl: pr.html_url,
+          redact: REDACT,
+        });
+        writeEvent({ root: ROOT, runId, kind: "MERGED", text: `Merged (api/${mergeMethod}): ${pr.html_url}`, redact: REDACT });
+        return;
+      }
+
+      await setLatestFeedback(pageId, `Merge attempted (method=${mergeMethod}) but GitHub reports not merged: ${res?.message || "unknown"}`.slice(0, 2000));
+      return; // stay in Ready to Merge
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      // Do NOT throw: keep card in Ready to Merge and let PM/human decide.
+      await setLatestFeedback(pageId, `Merge failed (method=${mergeMethod}): ${msg}`.slice(0, 2000));
+      return;
+    }
   }
 
   // If closed without merge, bounce it back.
@@ -668,7 +891,7 @@ async function processReadyToMerge(page) {
   // If still open, do nothing.
 }
 
-async function safeHandle(page, fn) {
+async function safeHandle(page, { stage = "" } = {}, fn) {
   // Notion pages are blocks; archived/in_trash pages cannot be edited and will throw:
   // "Can't edit block that is archived".
   if (page?.archived || page?.in_trash) return;
@@ -685,6 +908,7 @@ async function safeHandle(page, fn) {
     }
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
+    recordErrorForAutoheal({ pageId, stage, errorText: msg });
     try {
       await setLastError(pageId, msg);
       await setLatestFeedback(pageId, msg);
@@ -700,10 +924,26 @@ async function getAiFlowControl() {
   // Master switch lives in a dedicated Notion card.
   // If switch is missing/unreadable, default to enabled.
   const controlTitle = process.env.PEREGRINE_CONTROL_CARD_TITLE || "🧭 Peregrine Control — AI Flow Master Switch";
+
+  const empty = {
+    enabled: true,
+    intervalMin: 0,
+    lastRunAtMs: 0,
+    runNow: false,
+    pageId: "",
+
+    workSessionEnabled: false,
+    workSessionEndsAtMs: 0,
+    workSessionActionBudget: 0,
+    workSessionActionsUsed: 0,
+    workSessionMaxItems: null,
+    workSessionMaxLlmActions: null,
+  };
+
   try {
     const res = await queryItemsByName(controlTitle);
     const page = (res?.results ?? [])[0];
-    if (!page) return { enabled: true, intervalMin: 0, lastRunAtMs: 0, runNow: false, pageId: "" };
+    if (!page) return empty;
 
     const enabled = readCheckbox(page, "AI Flow Enabled");
     const intervalMin = Math.max(0, Math.round(readNumber(page, "AI Tick Interval (min)") ?? 0));
@@ -712,23 +952,69 @@ async function getAiFlowControl() {
     const lastIso = readDateStart(page, "AI Tick Last Run");
     const lastRunAtMs = lastIso ? Date.parse(lastIso) : 0;
 
-    return { enabled, intervalMin, lastRunAtMs, runNow, pageId: page.id };
+    const workSessionEnabled = readCheckbox(page, CONTROL_WORK_SESSION_ENABLED);
+    const endsIso = readDateStart(page, CONTROL_WORK_SESSION_ENDS_AT);
+    const workSessionEndsAtMs = endsIso ? Date.parse(endsIso) : 0;
+
+    const workSessionActionBudget = Math.max(0, Math.round(readNumber(page, CONTROL_WORK_SESSION_ACTION_BUDGET) ?? 0));
+    const workSessionActionsUsed = Math.max(0, Math.round(readNumber(page, CONTROL_WORK_SESSION_ACTIONS_USED) ?? 0));
+
+    const workSessionMaxItems = readNumber(page, CONTROL_WORK_SESSION_MAX_ITEMS);
+    const workSessionMaxLlmActions = readNumber(page, CONTROL_WORK_SESSION_MAX_LLM_ACTIONS);
+
+    return {
+      enabled,
+      intervalMin,
+      lastRunAtMs,
+      runNow,
+      pageId: page.id,
+
+      workSessionEnabled,
+      workSessionEndsAtMs,
+      workSessionActionBudget,
+      workSessionActionsUsed,
+      workSessionMaxItems,
+      workSessionMaxLlmActions,
+    };
   } catch {
-    return { enabled: true, intervalMin: 0, lastRunAtMs: 0, runNow: false, pageId: "" };
+    return empty;
   }
 }
 
 async function main() {
-  const max = intEnv("PEREGRINE_MAX_ITEMS", 10);
-  const maxLlmActions = intEnv("PEREGRINE_MAX_LLM_ACTIONS_PER_TICK", max);
+  // Best-effort: ensure Phase-1 properties exist on the Kanban database.
+  // (This keeps cards from getting stranded when properties are missing.)
+  try {
+    await ensureProperties([
+      { name: CONTROL_WORK_SESSION_ENABLED, type: "checkbox" },
+      { name: CONTROL_WORK_SESSION_ENDS_AT, type: "date" },
+      { name: CONTROL_WORK_SESSION_ACTION_BUDGET, type: "number" },
+      { name: CONTROL_WORK_SESSION_ACTIONS_USED, type: "number" },
+      { name: CONTROL_WORK_SESSION_MAX_ITEMS, type: "number" },
+      { name: CONTROL_WORK_SESSION_MAX_LLM_ACTIONS, type: "number" },
+
+      { name: MERGE_REQUESTED_PROP, type: "checkbox" },
+      { name: MERGE_APPROVED_PROP, type: "checkbox" },
+      { name: MERGE_METHOD_PROP, type: "select", schema: { options: [] } },
+    ]);
+  } catch {
+    // ignore
+  }
+  try {
+    await ensureSelectOptions({ propName: MERGE_METHOD_PROP, optionNames: ["squash", "merge", "rebase"] });
+  } catch {
+    // ignore
+  }
+
+  // Defaults (can be overridden by Work Session controls)
+  let max = intEnv("PEREGRINE_MAX_ITEMS", 10);
+  let maxLlmActions = intEnv("PEREGRINE_MAX_LLM_ACTIONS_PER_TICK", max);
   let llmActions = 0;
 
-  async function handleLlmAction(page, fn) {
-    if (llmActions >= maxLlmActions) return false;
-    llmActions += 1;
-    await safeHandle(page, fn);
-    return true;
-  }
+  // Work session budget accounting (persisted on the control card)
+  let sessionActionBudget = 0;
+  let sessionActionsUsedStart = 0;
+  let sessionActionsUsedDelta = 0;
 
   // Global on/off switch + configurable cadence (prevents any GitHub/LLM work when off).
   const ctl = await getAiFlowControl();
@@ -736,12 +1022,71 @@ async function main() {
     console.log("Peregrine: AI flow disabled via Notion master switch; exiting tick.");
     return;
   }
+
+  // Work Session gating: PM controls when the automation is allowed to do any work.
+  if (!ctl.workSessionEnabled) {
+    console.log("Peregrine: work session disabled; exiting tick.");
+    return;
+  }
+
+  const now = Date.now();
+  if (ctl.workSessionEndsAtMs && now > ctl.workSessionEndsAtMs) {
+    console.log("Peregrine: work session ended; disabling work session + AI flow.");
+    if (ctl.pageId) {
+      try {
+        await updatePage(ctl.pageId, {
+          [CONTROL_WORK_SESSION_ENABLED]: { checkbox: false },
+          "AI Flow Enabled": { checkbox: false },
+        });
+      } catch {
+        // ignore
+      }
+    }
+    return;
+  }
+
+  // Work session overrides
+  if (typeof ctl.workSessionMaxItems === "number" && ctl.workSessionMaxItems > 0) {
+    max = Math.max(1, Math.round(ctl.workSessionMaxItems));
+  }
+  if (typeof ctl.workSessionMaxLlmActions === "number" && ctl.workSessionMaxLlmActions > 0) {
+    maxLlmActions = Math.max(1, Math.round(ctl.workSessionMaxLlmActions));
+  }
+
+  sessionActionBudget = Math.max(0, Math.round(ctl.workSessionActionBudget || 0));
+  sessionActionsUsedStart = Math.max(0, Math.round(ctl.workSessionActionsUsed || 0));
+
+  if (sessionActionBudget > 0 && sessionActionsUsedStart >= sessionActionBudget) {
+    console.log("Peregrine: work session LLM action budget exhausted; disabling work session + AI flow.");
+    if (ctl.pageId) {
+      try {
+        await updatePage(ctl.pageId, {
+          [CONTROL_WORK_SESSION_ENABLED]: { checkbox: false },
+          "AI Flow Enabled": { checkbox: false },
+        });
+      } catch {
+        // ignore
+      }
+    }
+    return;
+  }
+
+  async function handleLlmAction(page, stage, fn) {
+    if (llmActions >= maxLlmActions) return false;
+    if (sessionActionBudget > 0 && sessionActionsUsedStart + sessionActionsUsedDelta >= sessionActionBudget) return false;
+    llmActions += 1;
+    sessionActionsUsedDelta += 1;
+    await safeHandle(page, { stage }, fn);
+    return true;
+  }
+
   if (!ctl.runNow && ctl.intervalMin > 0 && ctl.lastRunAtMs > 0) {
     const elapsedMs = Date.now() - ctl.lastRunAtMs;
     if (elapsedMs < ctl.intervalMin * 60_000) {
       return; // too soon; noop
     }
   }
+
   // Stamp last-run at start so overlapping cron triggers don't double-run.
   // Also auto-clear "Run Now" so it behaves like a one-shot trigger.
   if (ctl.pageId) {
@@ -764,6 +1109,13 @@ async function main() {
     // ignore
   }
 
+  // Best-effort: ensure the Kanban Status select has the core workflow options so setStatus() doesn't strand cards in Error.
+  try {
+    await ensureSelectOptions({ propName: "Status", optionNames: REQUIRED_STATUSES });
+  } catch {
+    // ignore
+  }
+
   // If Intake auto-splitting is enabled, ensure the Epic status option exists.
   // Best-effort: only works when Status is a select property.
   if (INTAKE_AUTOSPLIT) {
@@ -778,7 +1130,7 @@ async function main() {
   const intake = await queryItemsByStatus("Intake");
   const intakeItems = (intake.results ?? []).slice(0, max);
   for (const page of intakeItems) {
-    const ok = await handleLlmAction(page, async () => processIntake(page));
+    const ok = await handleLlmAction(page, "Intake", async () => processIntake(page));
     if (!ok) break;
   }
 
@@ -786,7 +1138,7 @@ async function main() {
   const ready = await queryItemsByStatus("Ready for Dev");
   const readyItems = (ready.results ?? []).slice(0, max);
   for (const page of readyItems) {
-    const ok = await handleLlmAction(page, async () => processReadyForDev(page));
+    const ok = await handleLlmAction(page, "Ready for Dev", async () => processReadyForDev(page));
     if (!ok) break;
   }
 
@@ -794,7 +1146,7 @@ async function main() {
   const needsChanges = await queryItemsByStatus("Needs Changes");
   const needsChangesItems = (needsChanges.results ?? []).slice(0, max);
   for (const page of needsChangesItems) {
-    const ok = await handleLlmAction(page, async () => processNeedsChanges(page));
+    const ok = await handleLlmAction(page, "Needs Changes", async () => processNeedsChanges(page));
     if (!ok) break;
   }
 
@@ -802,7 +1154,7 @@ async function main() {
   const inReview = await queryItemsByStatus("In Review");
   const inReviewItems = (inReview.results ?? []).slice(0, max);
   for (const page of inReviewItems) {
-    const ok = await handleLlmAction(page, async () => processInReview(page));
+    const ok = await handleLlmAction(page, "In Review", async () => processInReview(page));
     if (!ok) break;
   }
 
@@ -810,7 +1162,100 @@ async function main() {
   const readyToMerge = await queryItemsByStatus("Ready to Merge");
   const readyToMergeItems = (readyToMerge.results ?? []).slice(0, max);
   for (const page of readyToMergeItems) {
-    await safeHandle(page, async () => processReadyToMerge(page));
+    await safeHandle(page, { stage: "Ready to Merge" }, async () => processReadyToMerge(page));
+  }
+
+  // Error auto-heal (first-time only per distinct error signature)
+  // Goal: fix obvious config/schema issues (e.g., missing Notion Status select options), then move the card back to a recoverable status.
+  if (AUTOHEAL_ENABLED) {
+    try {
+      const errorPages = await queryItemsByStatus("Error");
+      const items = (errorPages.results ?? []).slice(0, AUTOHEAL_MAX_ITEMS);
+
+      for (const page of items) {
+        const pageId = page.id;
+        const title = readTitle(page);
+        const lastError = (readRichText(page, "Last Error") || readRichText(page, "Latest Feedback") || "").trim();
+        if (!lastError) continue;
+
+        const sig = autohealSig(lastError);
+        if (!shouldAttemptAutoheal({ pageId, sig })) continue;
+
+        // Stage context (if the runner recorded it when the error was produced)
+        const state = loadAutohealState();
+        const stage = state.pages?.[pageId]?.lastStage || "";
+
+        // First: detect unfixable external issues (quota/auth) and avoid thrashing.
+        if (looksLikeOpenAiQuotaOrAuth(lastError)) {
+          markAutohealAttempt({
+            pageId,
+            sig,
+            result: { applied: false, fix: "blocked_openai_quota_or_auth" },
+          });
+          console.log(
+            `PEREGRINE_AUTOHEAL_APPLIED ${JSON.stringify({ pageId, title, url: notionPageUrl(page), applied: false, errorSig: sig, error: lastError.slice(0, 300), fix: "OpenAI quota/auth issue — cannot auto-fix. Add credits/valid key, then move card out of Error." })}`
+          );
+          continue;
+        }
+
+        // Fix: Notion select schema missing required Status options.
+        if (looksLikeNotionMissingSelectOption(lastError)) {
+          let fixSummary = "";
+          try {
+            const res = await ensureSelectOptions({ propName: "Status", optionNames: REQUIRED_STATUSES });
+            if (res?.skipped) fixSummary = `ensure Status options: skipped (${res.reason || "unknown"})`;
+            else fixSummary = `ensure Status options: added ${res.added ?? "?"}`;
+          } catch (e) {
+            fixSummary = `ensure Status options failed: ${e instanceof Error ? e.message : String(e)}`.slice(0, 300);
+          }
+
+          const recovered = inferRecoveredStatus(page, stage);
+          try {
+            await setLatestFeedback(pageId, `Auto-heal applied: ${fixSummary}. Recovered status: ${recovered}.`);
+            await setLastError(pageId, "");
+          } catch {
+            // ignore
+          }
+
+          try {
+            await setStatus(pageId, recovered);
+          } catch {
+            // ignore
+          }
+
+          markAutohealAttempt({
+            pageId,
+            sig,
+            result: { applied: true, fix: fixSummary, recoveredStatus: recovered },
+          });
+
+          console.log(
+            `PEREGRINE_AUTOHEAL_APPLIED ${JSON.stringify({ pageId, title, url: notionPageUrl(page), applied: true, errorSig: sig, error: lastError.slice(0, 300), fix: fixSummary, recoveredStatus: recovered })}`
+          );
+
+          continue;
+        }
+
+        // Default: mark attempted so we don't spam; no safe automated fix known.
+        markAutohealAttempt({ pageId, sig, result: { applied: false, fix: "no_known_safe_fix" } });
+        console.log(
+          `PEREGRINE_AUTOHEAL_APPLIED ${JSON.stringify({ pageId, title, url: notionPageUrl(page), applied: false, errorSig: sig, error: lastError.slice(0, 300), fix: "No known safe auto-fix for this error. Needs human intervention." })}`
+        );
+      }
+    } catch {
+      // ignore
+    }
+  }
+
+  // Persist work-session LLM action usage (best-effort).
+  if (ctl.pageId && sessionActionsUsedDelta > 0) {
+    try {
+      await updatePage(ctl.pageId, {
+        [CONTROL_WORK_SESSION_ACTIONS_USED]: { number: sessionActionsUsedStart + sessionActionsUsedDelta },
+      });
+    } catch {
+      // ignore
+    }
   }
 
   // Note: do NOT commit/push artifacts here.

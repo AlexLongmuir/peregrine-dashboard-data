@@ -83,6 +83,30 @@ export async function ensureSelectOptions({ propName, optionNames }) {
   return { skipped: false, added: merged.length - existing.length };
 }
 
+export async function ensureProperties(defs = []) {
+  const ds = await getDataSource();
+  const existing = ds.properties || {};
+
+  const patch = {};
+  const added = [];
+
+  for (const def of defs || []) {
+    const name = String(def?.name || "").trim();
+    const type = String(def?.type || "").trim();
+    if (!name || !type) continue;
+    if (existing[name]) continue;
+
+    const schema = def?.schema && typeof def.schema === "object" ? def.schema : {};
+    patch[name] = { [type]: schema };
+    added.push(name);
+  }
+
+  if (added.length === 0) return { skipped: true, reason: "no_changes", added: [] };
+
+  await patchDataSource(patch);
+  return { skipped: false, added };
+}
+
 export async function queryItemsByStatus(status) {
   const dsId = requireEnv("NOTION_DATA_SOURCE_ID");
   const max = intEnv("PEREGRINE_MAX_ITEMS", 10);

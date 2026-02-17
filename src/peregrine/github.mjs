@@ -109,6 +109,20 @@ export async function getPullRequest({ repo, prNumber }) {
   return res.data;
 }
 
+export async function mergePullRequest({ repo, prNumber, mergeMethod = "squash", commitTitle, commitMessage } = {}) {
+  const { owner, repo: name } = parseRepo(repo);
+  const octokit = getOctokit();
+  const res = await octokit.request("PUT /repos/{owner}/{repo}/pulls/{pull_number}/merge", {
+    owner,
+    repo: name,
+    pull_number: prNumber,
+    merge_method: mergeMethod,
+    ...(commitTitle ? { commit_title: commitTitle } : {}),
+    ...(commitMessage ? { commit_message: commitMessage } : {}),
+  });
+  return res.data; // merged, message, sha
+}
+
 export async function updatePullRequest({ repo, prNumber, title, body }) {
   const { owner, repo: name } = parseRepo(repo);
   const octokit = getOctokit();
