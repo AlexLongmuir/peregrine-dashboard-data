@@ -1,0 +1,4 @@
+- 2026-02-17T18:07:43.701Z **INTAKE** — Notion intake received: Update Sports Homepage to be an exact 1:1 replica of Spreadex Site — 2/3 Header & Footer Parity
+- 2026-02-17T18:07:52.608Z **SCOPE** — Scope triage: split
+- 2026-02-17T18:08:27.357Z **PRD_AGENT** — PRD drafted
+- 2026-02-17T18:08:28.550Z **GITHUB** — Created issue https://github.com/AlexLongmuir/spreadex-mobile-ui/issues/8

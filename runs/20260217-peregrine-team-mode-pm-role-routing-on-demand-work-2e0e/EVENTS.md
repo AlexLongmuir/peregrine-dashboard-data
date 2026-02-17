@@ -1,0 +1,4 @@
+- 2026-02-17T18:06:30.439Z **INTAKE** — Notion intake received: Peregrine: Team Mode (PM + role routing) + on-demand work sessions
+- 2026-02-17T18:06:48.274Z **SCOPE** — Scope triage: split
+- 2026-02-17T18:07:37.824Z **PRD_AGENT** — PRD drafted
+- 2026-02-17T18:07:40.231Z **GITHUB** — Created issue https://github.com/AlexLongmuir/peregrine-dashboard-data/issues/2
