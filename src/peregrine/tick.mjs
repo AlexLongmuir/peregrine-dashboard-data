@@ -116,6 +116,59 @@ const MERGE_REQUESTED_PROP = "Merge Requested";
 const MERGE_APPROVED_PROP = "Merge Approved";
 const MERGE_METHOD_PROP = "Merge Method";
 
+// ─── Team Mode (optional) ─────────────────────────────────────────────
+// When enabled, Peregrine will only process cards whose Team Stage is Approved/In Progress.
+// Cards with no Team Stage set remain processable (backward compatible).
+const TEAM_MODE = boolEnv("PEREGRINE_TEAM_MODE", false);
+const AUTOMERGE_ENABLED = boolEnv("PEREGRINE_AUTOMERGE_ENABLED", true);
+const TEAM_STAGE_PROP = process.env.PEREGRINE_TEAM_STAGE_PROP || "Team Stage";
+const TEAM_OWNER_PROP = process.env.PEREGRINE_TEAM_OWNER_PROP || "Owner Agent";
+const TEAM_CHECKPOINT_PROP = process.env.PEREGRINE_TEAM_CHECKPOINT_PROP || "Checkpoint";
+const TEAM_IS_TEMPLATE_PROP = process.env.PEREGRINE_TEAM_IS_TEMPLATE_PROP || "Is Template";
+
+function teamAllowsProcess(page) {
+  if (!TEAM_MODE) return true;
+  if (readCheckbox(page, TEAM_IS_TEMPLATE_PROP)) return false;
+  const stage = readSelect(page, TEAM_STAGE_PROP);
+  if (!stage) return true;
+  return stage === "Approved" || stage === "In Progress";
+}
+
+async function teamStampWorking(page, { owner = "", checkpoint = "" } = {}) {
+  if (!TEAM_MODE) return;
+  const pageId = page?.id;
+  if (!pageId) return;
+
+  const patch = {
+    ...(owner ? { [TEAM_OWNER_PROP]: { select: { name: owner } } } : {}),
+    [TEAM_STAGE_PROP]: { select: { name: "In Progress" } },
+    ...(checkpoint ? { [TEAM_CHECKPOINT_PROP]: { rich_text: [{ text: { content: String(checkpoint).slice(0, 2000) } }] } } : {}),
+  };
+
+  try {
+    await updatePage(pageId, patch);
+  } catch {
+    // ignore
+  }
+}
+
+async function teamSetStage(page, { stage = "", owner = "", checkpoint = "" } = {}) {
+  if (!TEAM_MODE) return;
+  const pageId = page?.id;
+  if (!pageId) return;
+  const patch = {
+    ...(stage ? { [TEAM_STAGE_PROP]: { select: { name: stage } } } : {}),
+    ...(owner ? { [TEAM_OWNER_PROP]: { select: { name: owner } } } : {}),
+    ...(checkpoint ? { [TEAM_CHECKPOINT_PROP]: { rich_text: [{ text: { content: String(checkpoint).slice(0, 2000) } }] } } : {}),
+  };
+  if (Object.keys(patch).length === 0) return;
+  try {
+    await updatePage(pageId, patch);
+  } catch {
+    // ignore
+  }
+}
+
 function autohealSig(text) {
   const t = String(text || "").trim();
   return crypto.createHash("sha1").update(t.slice(0, 4000)).digest("hex").slice(0, 12);
@@ -221,6 +274,18 @@ async function processIntake(page) {
   const roughDraft = readRichText(page, "Rough Draft");
   const targetRepo = readTargetRepo(page).trim();
   if (!targetRepo) throw new Error(`Missing Target Repo on Notion card ${pageId}`);
+
+  if (TEAM_MODE) {
+    const checkpoint = [
+      `Goal: ${title || "(untitled)"}`,
+      `Now: drafting PRD + creating GitHub issue`,
+      `Next: generate PRD, then dev PR`,
+      `Blockers: none`,
+      `PR/Branch: (pending)`,
+      `Questions for alex: none`,
+    ].join("\n");
+    await teamStampWorking(page, { owner: "PM", checkpoint });
+  }
 
   const existingIssueUrl = readUrl(page, "GitHub Issue").trim();
 
@@ -443,6 +508,18 @@ async function processIntake(page) {
     redact: REDACT,
   });
 
+  if (TEAM_MODE) {
+    const checkpoint = [
+      `Goal: ${prd.title || title || "(untitled)"}`,
+      `Now: PRD drafted; GitHub issue created`,
+      `Next: start dev implementation (auto)`,
+      `Blockers: none`,
+      `PR/Branch: (pending)`,
+      `Questions for alex: none`,
+    ].join("\n");
+    await teamSetStage(page, { stage: "In Progress", owner: "PM", checkpoint });
+  }
+
   // Optional: mirror PRD title back into Notion name.
   await updatePage(pageId, {
     Name: { title: [{ text: { content: prd.title.slice(0, 250) } }] },
@@ -612,6 +689,19 @@ async function processReadyForDev(page, { humanFeedback = "" } = {}) {  // human
     prUrl: pr.html_url,
     redact: REDACT,
   });
+
+  if (TEAM_MODE) {
+    const goal = readTitle(page) || "(untitled)";
+    const checkpoint = [
+      `Goal: ${goal}`,
+      `Now: PR opened; QA review pending`,
+      `Next: QA/reviewer runs; then alex review`,
+      `Blockers: none`,
+      `PR/Branch: ${pr.html_url}`,
+      `Questions for alex: none`,
+    ].join("\n");
+    await teamSetStage(page, { stage: "In Progress", owner: "QA", checkpoint });
+  }
 }
 
 function parseVerdict(reviewMarkdown) {
@@ -802,6 +892,20 @@ async function processInReview(page) {
       redact: REDACT,
     });
     writeEvent({ root: ROOT, runId, kind: "REVIEW_PASS", text: `Ready to Merge: ${pr.html_url}`, redact: REDACT });
+
+    if (TEAM_MODE) {
+      const goal = readTitle(page) || "(untitled)";
+      const checkpoint = [
+        `Goal: ${goal}`,
+        `Now: QA PASS; Ready to Merge`,
+        `Next: alex review PR and merge when ready`,
+        `Blockers: none`,
+        `PR/Branch: ${pr.html_url}`,
+        `Questions for alex: none`,
+      ].join("\n");
+      await teamSetStage(page, { stage: "PR Ready", owner: "PM", checkpoint });
+    }
+
     return;
   }
 
@@ -820,6 +924,19 @@ async function processInReview(page) {
     redact: REDACT,
   });
   writeEvent({ root: ROOT, runId, kind: "REVIEW_FAIL", text: `Needs Changes: ${pr.html_url}`, redact: REDACT });
+
+  if (TEAM_MODE) {
+    const goal = readTitle(page) || "(untitled)";
+    const checkpoint = [
+      `Goal: ${goal}`,
+      `Now: QA FAIL; Needs Changes (see Latest Feedback)`,
+      `Next: Developer fixes issues from review; rerun`,
+      `Blockers: none`,
+      `PR/Branch: ${pr.html_url}`,
+      `Questions for alex: none`,
+    ].join("\n");
+    await teamSetStage(page, { stage: "In Progress", owner: "Developer", checkpoint });
+  }
 }
 
 async function processReadyToMerge(page, { allowCiAutoFix = false } = {}) {
@@ -926,7 +1043,13 @@ ${ci.summary}`.slice(0, 2000);
   }
 
   // If approved for merge, attempt the merge (default method: squash).
-  if (mergeApproved) {
+  // Team-mode safety: you can disable all auto-merge behavior and keep this PR-only.
+  if (mergeApproved && !AUTOMERGE_ENABLED) {
+    await setLatestFeedback(pageId, "Merge approved, but auto-merge is disabled (PR-only mode). Please merge manually when ready.");
+    return;
+  }
+
+  if (mergeApproved && AUTOMERGE_ENABLED) {
     const methodRaw = (readSelect(page, MERGE_METHOD_PROP) || "squash").toLowerCase();
     const mergeMethod = methodRaw === "merge" || methodRaw === "rebase" || methodRaw === "squash" ? methodRaw : "squash";
 
@@ -1191,7 +1314,18 @@ async function main() {
     if (sessionActionBudget > 0 && sessionActionsUsedStart + sessionActionsUsedDelta >= sessionActionBudget) return false;
     llmActions += 1;
     sessionActionsUsedDelta += 1;
-    await safeHandle(page, { stage }, fn);
+
+    await safeHandle(page, { stage }, async () => {
+      // Team-mode bookkeeping (best-effort). Keep this lightweight.
+      if (TEAM_MODE) {
+        const owner =
+          stage === "Intake" ? "PM" : stage === "In Review" ? "QA" : stage === "Ready for Dev" || stage === "Needs Changes" ? "Developer" : "";
+        if (owner) await teamStampWorking(page, { owner });
+      }
+
+      await fn();
+    });
+
     return true;
   }
 
@@ -1229,9 +1363,29 @@ async function main() {
       }
     }
 
+    // Team-mode: ensure select options exist (best-effort, never fail tick)
+    if (TEAM_MODE) {
+      try {
+        await ensureSelectOptions({
+          propName: TEAM_STAGE_PROP,
+          optionNames: ["Proposed", "Approved", "In Progress", "Blocked", "PR Ready", "Done"],
+        });
+      } catch {
+        // ignore
+      }
+      try {
+        await ensureSelectOptions({
+          propName: TEAM_OWNER_PROP,
+          optionNames: ["PM", "Tech Lead", "Developer", "QA", "Design/UX", "Infra"],
+        });
+      } catch {
+        // ignore
+      }
+    }
+
     // Intake
     const intake = await queryItemsByStatus("Intake");
-    const intakeItems = (intake.results ?? []).slice(0, max);
+    const intakeItems = (intake.results ?? []).filter(teamAllowsProcess).slice(0, max);
     for (const page of intakeItems) {
       const ok = await handleLlmAction(page, "Intake", async () => processIntake(page));
       if (!ok) break;
@@ -1239,7 +1393,7 @@ async function main() {
 
     // Ready for Dev
     const ready = await queryItemsByStatus("Ready for Dev");
-    const readyItems = (ready.results ?? []).slice(0, max);
+    const readyItems = (ready.results ?? []).filter(teamAllowsProcess).slice(0, max);
     for (const page of readyItems) {
       const ok = await handleLlmAction(page, "Ready for Dev", async () => processReadyForDev(page));
       if (!ok) break;
@@ -1247,7 +1401,7 @@ async function main() {
 
     // Needs Changes (rerun dev loop on same PR/branch, using Latest Feedback as guidance)
     const needsChanges = await queryItemsByStatus("Needs Changes");
-    const needsChangesItems = (needsChanges.results ?? []).slice(0, max);
+    const needsChangesItems = (needsChanges.results ?? []).filter(teamAllowsProcess).slice(0, max);
     for (const page of needsChangesItems) {
       const ok = await handleLlmAction(page, "Needs Changes", async () => processNeedsChanges(page));
       if (!ok) break;
@@ -1255,7 +1409,7 @@ async function main() {
 
     // In Review (automated PRD-vs-diff review; advances to Ready to Merge or back to Needs Changes)
     const inReview = await queryItemsByStatus("In Review");
-    const inReviewItems = (inReview.results ?? []).slice(0, max);
+    const inReviewItems = (inReview.results ?? []).filter(teamAllowsProcess).slice(0, max);
     for (const page of inReviewItems) {
       const ok = await handleLlmAction(page, "In Review", async () => processInReview(page));
       if (!ok) break;

@@ -157,6 +157,20 @@ export async function queryItemsByName(name) {
   });
 }
 
+// Generic query helper (useful for PM / team-mode tooling)
+export async function queryItems({ filter = null, max = null } = {}) {
+  const dsId = requireEnv("NOTION_DATA_SOURCE_ID");
+  const pageSize = max ?? intEnv("PEREGRINE_MAX_ITEMS", 10);
+
+  return notionFetch(`https://api.notion.com/v1/data_sources/${dsId}/query`, {
+    method: "POST",
+    body: JSON.stringify({
+      ...(filter ? { filter } : {}),
+      page_size: pageSize,
+    }),
+  });
+}
+
 // ─── Read properties from a page ──────────────────────────────────────
 
 export function readTitle(page) {
