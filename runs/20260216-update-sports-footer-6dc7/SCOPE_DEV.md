@@ -1,10 +1,10 @@
 # Scope triage
 
-- Updated: 2026-02-17T09:30:50.823Z
+- Updated: 2026-02-17T09:35:46.067Z
 
 ```json
 {
   "decision": "split",
-  "rationale": "This touches multiple concerns (pixel-perfect UI/CSS, navigation behavior + offline/coming-soon logic, telemetry, and testing/visual regression). Splitting into sequential packages keeps each step independently verifiable (visual parity first, then behavior/instrumentation, then hardening/tests) w
+  "rationale": "This touches multiple independently testable concerns (pixel-perfect UI/CSS parity, navigation/link behavior with offline/coming-soon fallbacks, and telemetry + error handling + tests). Splitting into sequential packages reduces risk of regressions and makes verification clearer while still landin
 
 [REDACTED]
