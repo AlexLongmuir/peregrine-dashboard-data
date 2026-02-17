@@ -1,11 +1,12 @@
-diff --git a/src/components/mobile/homepage/NextRaces.tsx b/src/components/mobile/homepage/NextRaces.tsx
-index e1a6689..4e36dd1 100644
---- a/src/components/mobile/homepage/NextRaces.tsx
-+++ b/src/components/mobile/homepage/NextRaces.tsx
-@@ -53,6 +53,9 @@ type Mixpanel = {
-   track: (event: string, props?: Record<string, unknown>) => void;
- };
+diff --git a/src/components/mobile/homepage/HomepageView.tsx b/src/components/mobile/homepage/HomepageView.tsx
+index 22fef4c..abeff35 100644
+--- a/src/components/mobile/homepage/HomepageView.tsx
++++ b/src/components/mobile/homepage/HomepageView.tsx
+@@ -1,6 +1,7 @@
+ "use client";
  
-+const EMPTY_MESSAGE = "No upcoming races at this tim
+ import React, { useState } from "react";
++import Image from "next/image";
+ import { WarningText } from "./WarningText
 
 [REDACTED]

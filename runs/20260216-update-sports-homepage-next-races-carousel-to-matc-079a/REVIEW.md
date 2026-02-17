@@ -1,11 +1,10 @@
 Verdict: FAIL
 
 ## Manual QA required
-- Verify AC1/AC2 visual parity vs Spreadex mobile homepage (layout, spacing, typography, colors, icons, animations, chevrons) on real devices.
-- Verify touch scrolling + chevron behavior feels identical (momentum, snap, disabled states).
-- Verify visible focus states match reference and are clearly visible on mobile with external keyboard.
+- Visual parity vs Spreadex reference (card sizing, spacing, typography, colors, icons, shadows, transitions, chevrons) — cannot be proven from diff alone.
+- Touch scroll feel/momentum + chevron behavior parity — requires device testing.
+- Focus ring visibility and keyboard navigation behavior on mobile Safari/Chrome — requires manual verification.
 
-## AC checklist
-- **
+## AC check
 
 [REDACTED]
