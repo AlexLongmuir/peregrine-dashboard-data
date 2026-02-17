@@ -1,1 +1,2 @@
 - 2026-02-17T08:05:11.439Z **INTAKE** — Notion intake received: Vercel deployment failing after merging Header (spreadex-mobile-ui)
+- 2026-02-17T08:30:21.388Z **ERROR** — Missing or invalid GitHub Issue URL on card: 
