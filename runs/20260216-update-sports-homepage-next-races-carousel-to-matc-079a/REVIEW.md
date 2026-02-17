@@ -1,9 +1,8 @@
 Verdict: FAIL
 
 ## Manual QA required
-- Visual parity vs Spreadex mobile homepage carousel (layout, spacing, typography, colors, icons, transitions) (AC1/AC2)
-- Confirm whether chevrons exist in the June 2024 reference and, if so, that they appear/behave identically (AC3)
-- Verify mobile-only behavior in responsive breakpoints on real devices (AC9)
-- Verify touch scrolling feel/momentum matches ref
+- Visual parity vs Spreadex reference (card sizing, spacing, typography, colors, icons, shadows, transitions, chevrons) — cannot be proven from diff alone.
+- Touch scroll feel (momentum, snap/partial visibility) and chevron behavior (if implemented) — needs device testing.
+- Focus ring visibility and keyboard navigation behavior on mobile/desktop browsers — nee
 
 [REDACTED]

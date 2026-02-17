@@ -1,11 +1,9 @@
 diff --git a/src/components/mobile/homepage/NextRaces.tsx b/src/components/mobile/homepage/NextRaces.tsx
-index b1612ec..e055555 100644
+index e055555..8e582d3 100644
 --- a/src/components/mobile/homepage/NextRaces.tsx
 +++ b/src/components/mobile/homepage/NextRaces.tsx
-@@ -55,6 +55,7 @@ type Mixpanel = {
- 
- const EMPTY_MESSAGE = "No upcoming races at this time.";
- const ERROR_MESSAGE = "Unable to load races. Please try again.";
-+
+@@ -99,6 +99,7 @@ function SkeletonCard() {
+     <div
+       className="mr-[10px] h-[92px] w-[186px] flex-none rounded-[10px] border border-[#e6e6e6] bg-white px-[
 
 [REDACTED]

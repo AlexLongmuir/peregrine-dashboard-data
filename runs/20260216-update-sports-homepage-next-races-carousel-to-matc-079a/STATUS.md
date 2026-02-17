@@ -1,5 +1,5 @@
 # STATUS
-- Updated: 2026-02-17T20:40:22.365Z
+- Updated: 2026-02-17T20:46:11.476Z
 - Status: **Needs Changes**
 - Target repo: `AlexLongmuir/spreadex-mobile-ui`
 - Notion: https://www.notion.so/Update-Sports-Homepage-Next-Races-Carousel-to-Match-Spreadex-Mobile-Homepage-30903dbb590380c9a17ac2f4dbe410ee
