@@ -37,3 +37,7 @@
 - 2026-02-17T20:01:03.773Z **DEV** — Implementing
 - 2026-02-17T20:04:45.429Z **REVIEW** — Reviewing https://github.com/AlexLongmuir/spreadex-mobile-ui/pull/9
 - 2026-02-17T20:05:11.569Z **REVIEW_FAIL** — Needs Changes: https://github.com/AlexLongmuir/spreadex-mobile-ui/pull/9
+- 2026-02-17T20:10:21.890Z **DEV** — Planning
+- 2026-02-17T20:11:03.009Z **SCOPE_DEV** — Dev scope: split (3 pkgs)
+- 2026-02-17T20:11:05.632Z **DEV** — Implementing
+- 2026-02-17T20:15:28.864Z **DEV_FAIL** — Checks failed: Command failed: npm -C /tmp/peregrine-20260216-update-sports-homepage-next-races-carousel-to-matc-079a-dPwehm run -s lint  /tmp/peregrine-20260216-update-sports-homepage-next-races-carousel-to-matc-079a-dPwehm/src/components/mobile/homepage/HomepageView.tsx   101:9   warning  'accountSvg' is assigned a value but never used                                                               [REDACTED] 
