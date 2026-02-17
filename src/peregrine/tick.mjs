@@ -48,13 +48,14 @@ import {
   updatePullRequest,
   cloneRepo,
 } from "./github.mjs";
-import { planDev, rewritePrdFromIntake, reviewAgainstPrd } from "./openai.mjs";
+import { planDev, rewritePrdFromIntake, reviewAgainstPrd, scopeTriageFromIntake, scopeTriageFromPrd } from "./openai.mjs";
 import { implementFromPrd } from "./implement.mjs";
 import { boolEnv, ensureDir, intEnv, newRunId, sh } from "./util.mjs";
-import { writeEvent, writeImplementation, writePatch, writePlan, writePrd, writeReview, writeStatus } from "./artifacts.mjs";
+import { writeEvent, writeImplementation, writePatch, writePlan, writePrd, writeReview, writeScope, writeStatus } from "./artifacts.mjs";
 
 const ROOT = process.cwd();
 const REDACT = boolEnv("PEREGRINE_REDACT_ARTIFACTS", true);
+const MAX_PACKAGES = intEnv("PEREGRINE_MAX_PACKAGES", 10);
 
 function notionPageUrl(page) {
   return page.url || "";
@@ -86,7 +87,18 @@ async function processIntake(page) {
 
   writeEvent({ root: ROOT, runId, kind: "INTAKE", text: `Notion intake received: ${title}`, redact: REDACT });
 
-  const prd = await rewritePrdFromIntake({ title, roughDraft, targetRepo });
+  // Scope triage (best-effort): decide single vs split and propose work packages.
+  let scope = null;
+  try {
+    scope = await scopeTriageFromIntake({ title, roughDraft, targetRepo, maxPackages: MAX_PACKAGES });
+    writeScope({ root: ROOT, runId, scopeJson: scope, fileName: "SCOPE.md", redact: REDACT });
+    writeEvent({ root: ROOT, runId, kind: "SCOPE", text: `Scope triage: ${scope.decision || ""}`, redact: REDACT });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    writeEvent({ root: ROOT, runId, kind: "SCOPE_FAIL", text: msg, redact: true });
+  }
+
+  const prd = await rewritePrdFromIntake({ title, roughDraft, targetRepo, scope });
   writePrd({ root: ROOT, runId, prdMarkdown: prd.body, redact: REDACT });
 
   writeEvent({ root: ROOT, runId, kind: "PRD_AGENT", text: `PRD drafted`, redact: REDACT });
@@ -137,6 +149,17 @@ async function processReadyForDev(page, { humanFeedback = "" } = {}) {  // human
   const plan = await planDev({ prdBody });
   writePlan({ root: ROOT, runId, planMarkdown: plan, redact: REDACT });
 
+  // Scope triage from PRD (best-effort): used to split dev work into sequential packages.
+  let devScope = null;
+  try {
+    devScope = await scopeTriageFromPrd({ prdBody, maxPackages: MAX_PACKAGES });
+    writeScope({ root: ROOT, runId, scopeJson: devScope, fileName: "SCOPE_DEV.md", redact: REDACT });
+    writeEvent({ root: ROOT, runId, kind: "SCOPE_DEV", text: `Dev scope: ${devScope.decision || ""} (${(devScope.packages || []).length} pkgs)`, redact: REDACT });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    writeEvent({ root: ROOT, runId, kind: "SCOPE_DEV_FAIL", text: msg, redact: true });
+  }
+
   // Clone target repo
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), `peregrine-${runId}-`));
   await cloneRepo({ repo, dir: tmp });
@@ -160,7 +183,15 @@ async function processReadyForDev(page, { humanFeedback = "" } = {}) {  // human
   writeEvent({ root: ROOT, runId, kind: "DEV", text: `Implementing`, redact: REDACT });
   let impl;
   try {
-    impl = await implementFromPrd({ dir: tmp, prdBody, plan, maxIters: 2, humanFeedback });
+    impl = await implementFromPrd({
+      dir: tmp,
+      prdBody,
+      plan,
+      maxIters: 2,
+      humanFeedback,
+      packages: Array.isArray(devScope?.packages) ? devScope.packages : null,
+      maxPackages: MAX_PACKAGES,
+    });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     await setLatestFeedback(pageId, msg);
@@ -197,10 +228,24 @@ async function processReadyForDev(page, { humanFeedback = "" } = {}) {  // human
   }
 
   writePatch({ root: ROOT, runId, patch: impl.patch, redact: true });
+
+  const pkgSummary = Array.isArray(devScope?.packages) && devScope.packages.length
+    ? [
+        "## Work packages",
+        "",
+        ...devScope.packages.slice(0, MAX_PACKAGES).map((p, idx) => {
+          const name = String(p?.name || `Package ${idx + 1}`);
+          const goal = String(p?.goal || "");
+          return `- ${idx + 1}. **${name}**${goal ? ` — ${goal}` : ""}`;
+        }),
+        "",
+      ].join("\n")
+    : "";
+
   writeImplementation({
     root: ROOT,
     runId,
-    md: `## Diff stat\n\n\n\`\`\`\n${impl.diffStat}\n\`\`\`\n\n## Changed files\n${impl.changedFiles.map((f) => `- ${f}`).join("\n")}\n`,
+    md: `${pkgSummary}## Diff stat\n\n\n\`\`\`\n${impl.diffStat}\n\`\`\`\n\n## Changed files\n${impl.changedFiles.map((f) => `- ${f}`).join("\n")}\n`,
     redact: REDACT,
   });
 

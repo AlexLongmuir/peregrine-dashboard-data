@@ -33,6 +33,23 @@ export function writeStatus({ root, runId, status, repo, notionUrl, issueUrl, pr
   writeFile(path.join(dir, "STATUS.md"), redactIfNeeded(md, false));
 }
 
+export function writeScope({ root, runId, scopeJson, fileName = "SCOPE.md", redact = true }) {
+  const dir = runDir(root, runId);
+  ensureDir(dir);
+  const md = [
+    `# Scope triage`,
+    ``,
+    `- Updated: ${nowIso()}`,
+    ``,
+    `\`\`\`json`,
+    JSON.stringify(scopeJson ?? {}, null, 2),
+    `\`\`\``,
+    ``,
+  ].join("\n");
+
+  writeFile(path.join(dir, fileName), redactIfNeeded(md, redact));
+}
+
 export function writePrd({ root, runId, prdMarkdown, redact = true }) {
   const dir = runDir(root, runId);
   ensureDir(dir);

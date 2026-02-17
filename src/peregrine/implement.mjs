@@ -77,11 +77,12 @@ function readFileSafe(p, maxChars = 8000) {
   }
 }
 
-function extractHintsFromPrd(prdBody) {
-  const text = String(prdBody || "");
-  // Extremely simple heuristic: pull some nouns from the title/ACs/keywords.
+function extractHintsFromText(text) {
+  const t = String(text || "");
+  const lower = t.toLowerCase();
+
   const candidates = [];
-  for (const kw of [
+  const base = [
     "landing page",
     "benefit",
     "benefits",
@@ -92,42 +93,63 @@ function extractHintsFromPrd(prdBody) {
     "onboarding",
     "settings",
     "paywall",
-    "RevenueCat",
-    "Mixpanel",
-    "Supabase",
-  ]) {
-    if (text.toLowerCase().includes(kw)) candidates.push(kw);
+    "revenuecat",
+    "mixpanel",
+    "supabase",
+    "rls",
+    "migration",
+    "telemetry",
+    "analytics",
+    "auth",
+    "login",
+  ];
+
+  for (const kw of base) {
+    if (lower.includes(kw)) candidates.push(kw);
   }
-  return [...new Set(candidates)].slice(0, 8);
+
+  // If the package hints mention specific files/dirs/components, keep those tokens too.
+  // (git grep -S uses literal string search; keep these reasonably specific.)
+  const fileish = t.match(/[A-Za-z0-9_./-]{4,}/g) || [];
+  for (const tok of fileish) {
+    if (tok.includes("/") || tok.includes(".")) candidates.push(tok);
+  }
+
+  // Also keep a few longer identifier-like tokens.
+  const idish = t.match(/[A-Za-z][A-Za-z0-9_-]{6,}/g) || [];
+  for (const tok of idish.slice(0, 10)) candidates.push(tok);
+
+  return [...new Set(candidates)].slice(0, 12);
 }
 
-export async function implementFromPrd({ dir, prdBody, plan, maxIters = 2, humanFeedback = "" }) {  // humanFeedback: optional guidance from Notion "Latest Feedback" when rerunning after Needs Changes
-
-  // Collect repo context
-  const files = listRepoFiles(dir, 3000);
-  const hints = extractHintsFromPrd(prdBody);
+function buildAllowedPaths({ dir, repoFiles, hintText, isExcluded }) {
+  const hints = extractHintsFromText(hintText);
   const grep = grepSnippets(dir, hints);
 
-  // IMPORTANT: exclude Peregrine run-docs from the dev agent's editable set.
-  // The runner itself may write docs/peregrine/<runId>.md after successful code changes,
-  // but allowing the model to edit docs/peregrine/* leads to "doc-only" no-op attempts.
-  const excludedPrefixes = ["docs/peregrine/"];
-  const excludedNames = new Set(["package-lock.json", "yarn.lock", "pnpm-lock.yaml"]);
+  const picked = filePathsFromGrep(grep, 40).filter((p) => repoFiles.includes(p) && !isExcluded(p));
 
-  const isExcluded = (p) =>
-    excludedNames.has(p) || excludedPrefixes.some((pref) => p.startsWith(pref));
+  const lower = String(hintText || "").toLowerCase();
+  const regexes = [/^(|.*\/)(landing|benefit|home|welcome)/i];
+  if (lower.includes("mixpanel") || lower.includes("telemetry") || lower.includes("analytics")) {
+    regexes.push(/mixpanel|telemetry|analytics/i);
+  }
+  if (lower.includes("supabase") || lower.includes("rls") || lower.includes("migration")) {
+    regexes.push(/supabase|migration|rls|schema/i);
+  }
+  if (lower.includes("auth") || lower.includes("login")) {
+    regexes.push(/auth|login|signin|signup/i);
+  }
+  if (lower.includes("paywall") || lower.includes("revenuecat")) {
+    regexes.push(/paywall|revenuecat|iap|subscription/i);
+  }
 
-  const picked = filePathsFromGrep(grep, 40).filter((p) => files.includes(p) && !isExcluded(p));
-
-  // Heuristics based on filenames (landing/home/benefit)
-  const byName = files
-    .filter((p) => /(^|\/)(landing|benefit|home|welcome)/i.test(p))
+  const byName = repoFiles
+    .filter((p) => regexes.some((r) => r.test(p)))
     .filter((p) => !isExcluded(p))
-    .slice(0, 60);
+    .slice(0, 80);
 
   // Broad allowlist (more generous): allow edits across likely code/config files.
-  // Keep prompt size manageable; we can still validate against this list.
-  const broad = files
+  const broad = repoFiles
     .filter((p) => !isExcluded(p))
     .filter(
       (p) =>
@@ -150,25 +172,124 @@ export async function implementFromPrd({ dir, prdBody, plan, maxIters = 2, human
       "app/_layout.tsx",
       "app/(tabs)/_layout.tsx",
       "components/BenefitsSection.tsx",
-    ].filter((p) => files.includes(p));
+    ].filter((p) => repoFiles.includes(p));
     allowedPaths.push(...fallback);
   }
 
-  const candidateBlocks = [];
-  for (const rel of allowedPaths.slice(0, 8)) {
+  return { allowedPaths, hints, grep };
+}
+
+function buildCandidateFiles({ dir, allowedPaths, maxFiles = 8 }) {
+  const blocks = [];
+  for (const rel of allowedPaths.slice(0, maxFiles)) {
     const abs = path.join(dir, rel);
-    const c = readFileSafe(abs, 14000);
-    if (c) candidateBlocks.push(`## file: ${rel}\n\n${c}`);
+    const c = readFileSafe(abs, 14_000);
+    if (c) blocks.push(`## file: ${rel}\n\n${c}`);
+  }
+  return blocks.join("\n\n");
+}
+
+function restoreFiles({ dir, beforeContents }) {
+  for (const [rel, content] of Object.entries(beforeContents)) {
+    const abs = path.join(dir, rel);
+    if (content == null) continue;
+    fs.writeFileSync(abs, content);
+  }
+}
+
+function gitDiffNameOnly(dir) {
+  return sh("git", ["-C", dir, "diff", "--name-only"]).stdout
+    .split("\n")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
+async function runTypechecks({ dir }) {
+  // Keep per-iteration checks lightweight. Full lint/typecheck runs happen at the end.
+  runIfScriptExists(dir, "typecheck");
+
+  const backendDir = path.join(dir, "backend");
+  if (fs.existsSync(path.join(backendDir, "package.json"))) {
+    runIfScriptExists(backendDir, "typecheck");
+  }
+}
+
+function runFullChecks({ dir }) {
+  runIfScriptExists(dir, "lint");
+  runIfScriptExists(dir, "typecheck");
+
+  const backendDir = path.join(dir, "backend");
+  if (fs.existsSync(path.join(backendDir, "package.json"))) {
+    runIfScriptExists(backendDir, "lint");
+    runIfScriptExists(backendDir, "typecheck");
+  }
+}
+
+function normalizePackages(packages, maxPackages) {
+  const arr = Array.isArray(packages) ? packages : [];
+  return arr.slice(0, maxPackages).map((p, idx) => ({
+    name: String(p?.name || `Package ${idx + 1}`),
+    goal: String(p?.goal || ""),
+    acceptance_criteria_subset: Array.isArray(p?.acceptance_criteria_subset) ? p.acceptance_criteria_subset : [],
+    likely_files_areas: Array.isArray(p?.likely_files_areas) ? p.likely_files_areas : [],
+    deps: Array.isArray(p?.deps) ? p.deps : [],
+    risk: String(p?.risk || ""),
+  }));
+}
+
+function packageHintText(pkg) {
+  return [
+    pkg?.name,
+    pkg?.goal,
+    ...(pkg?.acceptance_criteria_subset || []),
+    ...(pkg?.likely_files_areas || []),
+    ...(pkg?.deps || []).length ? `deps: ${(pkg?.deps || []).join(", ")}` : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+export async function implementFromPrd({
+  dir,
+  prdBody,
+  plan,
+  packages = null,
+  maxPackages = 10,
+  maxIters = 2,
+  humanFeedback = "", // optional guidance from Notion "Latest Feedback" when rerunning after Needs Changes
+}) {
+  // Start from a clean working tree.
+  try {
+    sh("git", ["-C", dir, "reset", "--hard"]);
+  } catch {}
+
+  const repoFiles = listRepoFiles(dir, 3000);
+
+  // IMPORTANT: exclude Peregrine run-docs from the dev agent's editable set.
+  const excludedPrefixes = ["docs/peregrine/"];
+  const excludedNames = new Set(["package-lock.json", "yarn.lock", "pnpm-lock.yaml"]);
+  const isExcluded = (p) => excludedNames.has(p) || excludedPrefixes.some((pref) => p.startsWith(pref));
+
+  // Install deps once up front (so per-package typecheck works).
+  try {
+    installIfPackageJson(dir);
+    const backendDir = path.join(dir, "backend");
+    if (fs.existsSync(path.join(backendDir, "package.json"))) installIfPackageJson(backendDir);
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { ok: false, error: `Dependency install failed: ${msg}` };
   }
 
-  const candidateFiles = candidateBlocks.join("\n\n");
+  const pkgs = normalizePackages(packages, maxPackages);
+  const usePackages = pkgs.length > 1;
 
   let lastErr = "";
-  for (let i = 0; i < maxIters; i++) {
-    // Reset to clean state each attempt
-    try {
-      sh("git", ["-C", dir, "reset", "--hard"]);
-    } catch {}
+
+  const runOnePass = async ({ workPackage = null } = {}) => {
+    const hintText = [prdBody, workPackage ? packageHintText(workPackage) : null].filter(Boolean).join("\n\n");
+
+    const { allowedPaths } = buildAllowedPaths({ dir, repoFiles, hintText, isExcluded });
+    const candidateFiles = buildCandidateFiles({ dir, allowedPaths, maxFiles: 8 });
 
     const combinedErr = [humanFeedback, lastErr].filter(Boolean).join("\n\n");
 
@@ -176,18 +297,17 @@ export async function implementFromPrd({ dir, prdBody, plan, maxIters = 2, human
       prdBody,
       plan,
       allowedPaths,
-      repoFiles: files,
+      repoFiles,
       candidateFiles,
       previousError: combinedErr,
+      workPackage,
     });
 
     const filesToWrite = Array.isArray(edits.files) ? edits.files : [];
     if (filesToWrite.length === 0) {
-      lastErr = "Dev agent produced zero file edits.";
-      continue;
+      return { ok: false, error: "Dev agent produced zero file edits." };
     }
 
-    // Validate + write (all-or-nothing)
     const toWrite = filesToWrite.slice(0, 5).map((f) => ({
       rel: String(f.path || "").replace(/^\/*/, ""),
       content: String(f.content ?? ""),
@@ -195,49 +315,85 @@ export async function implementFromPrd({ dir, prdBody, plan, maxIters = 2, human
 
     const invalid = toWrite.find((f) => !f.rel || !allowedPaths.includes(f.rel));
     if (invalid) {
-      lastErr = `Invalid file path from dev agent: ${invalid.rel}`;
-      continue;
+      return { ok: false, error: `Invalid file path from dev agent: ${invalid.rel}` };
     }
 
-    for (const f of toWrite) {
-      const abs = path.join(dir, f.rel);
-      fs.writeFileSync(abs, f.content);
+    // Must touch at least one non-run-doc file.
+    const nonDocTouched = toWrite.some((f) => !f.rel.startsWith("docs/peregrine/"));
+    if (!nonDocTouched) {
+      return { ok: false, error: "Edits only changed docs/peregrine/. Need actual code changes." };
     }
 
-    const changed = sh("git", ["-C", dir, "diff", "--name-only"]).stdout
-      .split("\n")
-      .map((s) => s.trim())
-      .filter(Boolean);
-
-    const nonDoc = changed.filter((p) => !p.startsWith("docs/peregrine/"));
-    if (nonDoc.length === 0) {
-      lastErr = "Edits only changed docs/peregrine/. Need actual code changes.";
-      continue;
-    }
-
-    // Install deps + run minimal checks
+    const beforeContents = {};
     try {
-      installIfPackageJson(dir);
-      runIfScriptExists(dir, "lint");
-      runIfScriptExists(dir, "typecheck");
-
-      const backendDir = path.join(dir, "backend");
-      if (fs.existsSync(path.join(backendDir, "package.json"))) {
-        installIfPackageJson(backendDir);
-        runIfScriptExists(backendDir, "lint");
-        runIfScriptExists(backendDir, "typecheck");
+      for (const f of toWrite) {
+        const abs = path.join(dir, f.rel);
+        beforeContents[f.rel] = readFileSafe(abs, 5_000_000); // effectively full
       }
+
+      for (const f of toWrite) {
+        const abs = path.join(dir, f.rel);
+        fs.writeFileSync(abs, f.content);
+      }
+
+      // Lightweight checks (fail fast).
+      await runTypechecks({ dir });
+
+      return { ok: true };
     } catch (e) {
+      restoreFiles({ dir, beforeContents });
       const msg = e instanceof Error ? e.message : String(e);
-      lastErr = `Checks failed: ${msg}`;
-      continue;
+      return { ok: false, error: `Checks failed: ${msg}` };
     }
+  };
 
-    const patch = sh("git", ["-C", dir, "diff"]).stdout;
-    const stat = sh("git", ["-C", dir, "diff", "--stat"]).stdout;
+  if (usePackages) {
+    for (const pkg of pkgs) {
+      lastErr = "";
+      let ok = false;
 
-    return { ok: true, patch, diffStat: stat, changedFiles: changed };
+      for (let i = 0; i < maxIters; i++) {
+        const res = await runOnePass({ workPackage: pkg });
+        if (res.ok) {
+          ok = true;
+          break;
+        }
+        lastErr = res.error || "Package attempt failed";
+      }
+
+      if (!ok) {
+        return { ok: false, error: `Package "${pkg.name}" failed: ${lastErr || "Failed to generate/apply edits"}` };
+      }
+    }
+  } else {
+    // Single-pass implementation.
+    for (let i = 0; i < maxIters; i++) {
+      // Reset to clean state each attempt
+      try {
+        sh("git", ["-C", dir, "reset", "--hard"]);
+      } catch {}
+
+      const res = await runOnePass({ workPackage: pkgs[0] || null });
+      if (res.ok) break;
+      lastErr = res.error || "Single-pass attempt failed";
+
+      if (i === maxIters - 1) {
+        return { ok: false, error: lastErr || "Failed to generate/apply edits" };
+      }
+    }
   }
 
-  return { ok: false, error: lastErr || "Failed to generate/apply edits" };
+  // Full checks at end.
+  try {
+    runFullChecks({ dir });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    return { ok: false, error: `Checks failed: ${msg}` };
+  }
+
+  const patch = sh("git", ["-C", dir, "diff"]).stdout;
+  const stat = sh("git", ["-C", dir, "diff", "--stat"]).stdout;
+  const changedFiles = gitDiffNameOnly(dir);
+
+  return { ok: true, patch, diffStat: stat, changedFiles };
 }
