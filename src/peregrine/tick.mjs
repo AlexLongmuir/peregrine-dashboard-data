@@ -155,7 +155,7 @@ async function processIntake(page) {
         .join("\n")
         .slice(0, 2000);
 
-      // Try to set Parent relation; if the property doesn't exist, fall back to no relation.
+      // Best-effort: set Parent relation and Target Repo (select). Fall back gracefully if props don't exist.
       let child;
       try {
         child = await createCard({
@@ -165,11 +165,24 @@ async function processIntake(page) {
           status: "Intake",
           extraProperties: {
             [parentRelProp]: { relation: [{ id: pageId }] },
+            "Target Repo (select)": { select: { name: targetRepo } },
           },
         });
-      } catch (e) {
-        relationWorked = false;
-        child = await createCard({ title: childTitle, roughDraft: childRough, targetRepo, status: "Intake" });
+      } catch (e1) {
+        try {
+          child = await createCard({
+            title: childTitle,
+            roughDraft: childRough,
+            targetRepo,
+            status: "Intake",
+            extraProperties: {
+              [parentRelProp]: { relation: [{ id: pageId }] },
+            },
+          });
+        } catch (e2) {
+          relationWorked = false;
+          child = await createCard({ title: childTitle, roughDraft: childRough, targetRepo, status: "Intake" });
+        }
       }
 
       childPages.push(child);
