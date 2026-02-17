@@ -51,3 +51,6 @@
 - 2026-02-17T09:12:03.089Z **SCOPE_DEV** — Dev scope: split (3 pkgs)
 - 2026-02-17T09:12:13.172Z **ERROR** — Command failed: git -C /tmp/peregrine-20260216-update-sports-footer-6dc7-zb4q7v fetch origin peregrine/20260216-update-sports-footer-6dc7:peregrine/20260216-update-sports-footer-6dc7  error: RPC failed; HTTP 401 curl 22 The requested URL returned error: 401 fatal: expected 'packfile' 
 - 2026-02-17T09:30:16.663Z **DEV** — Planning
+- 2026-02-17T09:30:50.823Z **SCOPE_DEV** — Dev scope: split (3 pkgs)
+- 2026-02-17T09:30:53.398Z **DEV** — Implementing
+- 2026-02-17T09:31:13.475Z **DEV_FAIL** — (intermediate value)(intermediate value)(intermediate value) is not iterable
