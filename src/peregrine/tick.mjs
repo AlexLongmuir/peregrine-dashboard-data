@@ -14,14 +14,12 @@ import os from "node:os";
 import path from "node:path";
 
 import {
-  createCard,
   ensureSelectOptions,
   queryItemsByName,
   queryItemsByStatus,
   readCheckbox,
   readDateStart,
   readNumber,
-  readRelationIds,
   readRichText,
   readTargetRepo,
   readTitle,
@@ -89,27 +87,7 @@ async function processIntake(page) {
 
   writeEvent({ root: ROOT, runId, kind: "INTAKE", text: `Notion intake received: ${title}`, redact: REDACT });
 
-  // If this is already split (has children) but is still in Intake, just move it to Epic.
-  if (!isChild && existingChildren.length > 0) {
-    await setLatestFeedback(pageId, `Already split into ${existingChildren.length} child card(s). Each child will create its own issue/PR. (Parent auto-moved out of Intake.)`);
-    try {
-      await setStatus(pageId, epicStatus);
-    } catch {
-      await setStatus(pageId, "PRD Drafted");
-    }
-
-    writeStatus({
-      root: ROOT,
-      runId,
-      status: epicStatus,
-      repo: targetRepo,
-      notionUrl: notionPageUrl(page),
-      issueUrl: "",
-      prUrl: "",
-      redact: REDACT,
-    });
-    return;
-  }
+  // (Notion card auto-splitting is disabled; Intake always proceeds to PRD + GitHub Issue.)
 
   // Scope triage (best-effort): decide single vs split and propose work packages.
   let scope = null;
@@ -120,124 +98,6 @@ async function processIntake(page) {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     writeEvent({ root: ROOT, runId, kind: "SCOPE_FAIL", text: msg, redact: true });
-  }
-
-  const shouldSplit = !isChild && scope?.decision === "split" && Array.isArray(scope?.packages) && scope.packages.length > 1;
-
-  // Auto-split: generate child cards (each will become its own Issue + PR), mark parent as Epic.
-  if (shouldSplit) {
-    const pkgs = scope.packages.slice(0, MAX_PACKAGES);
-
-    const childPages = [];
-    let relationWorked = true;
-
-    for (let i = 0; i < pkgs.length; i += 1) {
-      const p = pkgs[i] || {};
-      const n = pkgs.length;
-
-      const childTitle = `${title} — ${i + 1}/${n} ${String(p.name || "").trim()}`.slice(0, 250).trim();
-      const childRough = [
-        `Parent: ${title}`,
-        `Target repo: ${targetRepo}`,
-        ``,
-        `Work package ${i + 1}/${n}: ${String(p.name || "").trim()}`,
-        String(p.goal || "") ? `Goal: ${String(p.goal || "").trim()}` : null,
-        Array.isArray(p.acceptance_criteria_subset) && p.acceptance_criteria_subset.length
-          ? ["Acceptance criteria:", ...p.acceptance_criteria_subset.slice(0, 8).map((x) => `- ${x}`)].join("\n")
-          : null,
-        Array.isArray(p.likely_files_areas) && p.likely_files_areas.length
-          ? ["Likely areas:", ...p.likely_files_areas.slice(0, 8).map((x) => `- ${x}`)].join("\n")
-          : null,
-        Array.isArray(p.deps) && p.deps.length ? `Depends on: ${p.deps.join(", ")}` : null,
-        String(p.risk || "") ? `Risk: ${String(p.risk || "").trim()}` : null,
-      ]
-        .filter(Boolean)
-        .join("\n")
-        .slice(0, 2000);
-
-      // Best-effort: set Parent relation and Target Repo (select). Fall back gracefully if props don't exist.
-      let child;
-      try {
-        child = await createCard({
-          title: childTitle,
-          roughDraft: childRough,
-          targetRepo,
-          status: "Intake",
-          extraProperties: {
-            [parentRelProp]: { relation: [{ id: pageId }] },
-            "Target Repo (select)": { select: { name: targetRepo } },
-          },
-        });
-      } catch (e1) {
-        try {
-          child = await createCard({
-            title: childTitle,
-            roughDraft: childRough,
-            targetRepo,
-            status: "Intake",
-            extraProperties: {
-              [parentRelProp]: { relation: [{ id: pageId }] },
-            },
-          });
-        } catch (e2) {
-          relationWorked = false;
-          child = await createCard({ title: childTitle, roughDraft: childRough, targetRepo, status: "Intake" });
-        }
-      }
-
-      childPages.push(child);
-    }
-
-    const childLinks = childPages
-      .map((c, idx) => {
-        const url = c?.url || "";
-        return `- ${idx + 1}. ${url || "(created)"}`;
-      })
-      .join("\n");
-
-    await setLatestFeedback(
-      pageId,
-      [
-        `Auto-split into ${childPages.length} child card(s). Each child will generate its own GitHub Issue + PR.`,
-        relationWorked ? null : `Note: Couldn't set Notion relation property "${parentRelProp}" (missing or misnamed). Child cards were still created.`,
-        "",
-        childLinks,
-      ]
-        .filter(Boolean)
-        .join("\n")
-        .slice(0, 2000)
-    );
-
-    // Mark parent as Epic so it doesn't create its own Issue/PR.
-    try {
-      await setStatus(pageId, epicStatus);
-    } catch {
-      await setStatus(pageId, "PRD Drafted");
-    }
-
-    // Mirror name so it's visually obvious this is not a leaf card.
-    try {
-      await updatePage(pageId, {
-        Name: { title: [{ text: { content: `EPIC: ${title}`.slice(0, 250) } }] },
-      });
-    } catch {
-      // ignore
-    }
-
-    writeEvent({ root: ROOT, runId, kind: "SPLIT", text: `Auto-split into ${childPages.length} child card(s).`, redact: REDACT });
-
-    writeStatus({
-      root: ROOT,
-      runId,
-      status: epicStatus,
-      repo: targetRepo,
-      notionUrl: notionPageUrl(page),
-      issueUrl: "",
-      prUrl: "",
-      redact: REDACT,
-    });
-
-    return;
   }
 
   // Default behavior (leaf card): PRD rewrite + GitHub Issue
@@ -733,13 +593,7 @@ async function main() {
     // ignore
   }
 
-  // Ensure Epic status option exists (used when auto-splitting Intake into child cards).
-  try {
-    const epicStatus = process.env.PEREGRINE_EPIC_STATUS || "Epic";
-    await ensureSelectOptions({ propName: "Status", optionNames: [epicStatus] });
-  } catch {
-    // ignore
-  }
+  // (No extra Notion status options needed)
 
   // Intake
   const intake = await queryItemsByStatus("Intake");
