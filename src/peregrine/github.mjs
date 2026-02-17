@@ -154,6 +154,36 @@ export async function listInstallationRepos({ perPage = 100 } = {}) {
   return (res.data.repositories || []).map((r) => r.full_name).filter(Boolean);
 }
 
+export async function listCheckRunsForRef({ repo, ref, filter = "latest", perPage = 100 } = {}) {
+  if (!repo || !ref) throw new Error("listCheckRunsForRef missing repo/ref");
+  const { owner, repo: name } = parseRepo(repo);
+  const octokit = getOctokit();
+
+  const res = await octokit.request("GET /repos/{owner}/{repo}/commits/{ref}/check-runs", {
+    owner,
+    repo: name,
+    ref,
+    filter,
+    per_page: perPage,
+  });
+
+  return res.data; // { total_count, check_runs: [...] }
+}
+
+export async function getCommitStatus({ repo, ref } = {}) {
+  if (!repo || !ref) throw new Error("getCommitStatus missing repo/ref");
+  const { owner, repo: name } = parseRepo(repo);
+  const octokit = getOctokit();
+
+  const res = await octokit.request("GET /repos/{owner}/{repo}/commits/{ref}/status", {
+    owner,
+    repo: name,
+    ref,
+  });
+
+  return res.data; // { state, statuses: [...] }
+}
+
 function repoHttpsUrl({ repo, token }) {
   const { owner, repo: name } = parseRepo(repo);
   if (!token) return `https://github.com/${owner}/${name}.git`;

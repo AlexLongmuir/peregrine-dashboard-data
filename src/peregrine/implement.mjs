@@ -29,6 +29,13 @@ function installIfPackageJson(dir) {
   return { skipped: false };
 }
 
+function npmInstall(dir) {
+  if (!fs.existsSync(path.join(dir, "package.json"))) return { skipped: true };
+  // Use npm install (not ci) so dependency additions can update lockfiles automatically.
+  sh("npm", ["-C", dir, "install", "--no-audit", "--no-fund"], { timeout: 15 * 60 * 1000 });
+  return { skipped: false };
+}
+
 function listRepoFiles(dir, max = 2000) {
   const { stdout } = sh("git", ["-C", dir, "ls-files"]);
   return stdout
@@ -190,9 +197,15 @@ function buildCandidateFiles({ dir, allowedPaths, maxFiles = 8 }) {
 }
 
 function restoreFiles({ dir, beforeContents }) {
-  for (const [rel, content] of Object.entries(beforeContents)) {
+  for (const [rel, content] of Object.entries(beforeContents || {})) {
     const abs = path.join(dir, rel);
-    if (content == null) continue;
+    if (content == null) {
+      // File did not exist before; best-effort remove if it was created during the failed attempt.
+      try {
+        fs.unlinkSync(abs);
+      } catch {}
+      continue;
+    }
     fs.writeFileSync(abs, content);
   }
 }
@@ -330,15 +343,29 @@ export async function implementFromPrd({
 
     const beforeContents = {};
     try {
-      for (const f of toWrite) {
-        const abs = path.join(dir, f.rel);
-        beforeContents[f.rel] = readFileSafe(abs, 5_000_000); // effectively full
+      const touched = new Set(toWrite.map((x) => x.rel));
+      const rootPkgChanged = touched.has("package.json");
+      const backendPkgChanged = touched.has("backend/package.json");
+
+      const lockfiles = [
+        ...(rootPkgChanged ? ["package-lock.json", "yarn.lock", "pnpm-lock.yaml"] : []),
+        ...(backendPkgChanged ? ["backend/package-lock.json", "backend/yarn.lock", "backend/pnpm-lock.yaml"] : []),
+      ];
+
+      const snapshot = [...new Set([...toWrite.map((f) => f.rel), ...lockfiles])];
+      for (const rel of snapshot) {
+        const abs = path.join(dir, rel);
+        beforeContents[rel] = readFileSafe(abs, 5_000_000); // effectively full
       }
 
       for (const f of toWrite) {
         const abs = path.join(dir, f.rel);
         fs.writeFileSync(abs, f.content);
       }
+
+      // If dependencies were changed, update lockfiles automatically.
+      if (rootPkgChanged) npmInstall(dir);
+      if (backendPkgChanged) npmInstall(path.join(dir, "backend"));
 
       // Lightweight checks (fail fast).
       await runTypechecks({ dir });

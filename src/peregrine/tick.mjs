@@ -46,6 +46,7 @@ import {
   getPullRequest,
   mergePullRequest,
   listInstallationRepos,
+  listCheckRunsForRef,
   gitCheckoutBranch,
   gitCheckoutNewBranch,
   gitCommitAll,
@@ -298,7 +299,7 @@ async function processIntake(page) {
     writeEvent({ root: ROOT, runId, kind: "SCOPE", text: `Scope triage: ${scope.decision || ""}`, redact: REDACT });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    recordErrorForAutoheal({ pageId, stage, errorText: msg });
+    recordErrorForAutoheal({ pageId, stage: "Intake", errorText: msg });
     writeEvent({ root: ROOT, runId, kind: "SCOPE_FAIL", text: msg, redact: true });
   }
 
@@ -479,7 +480,7 @@ async function processReadyForDev(page, { humanFeedback = "" } = {}) {  // human
     writeEvent({ root: ROOT, runId, kind: "SCOPE_DEV", text: `Dev scope: ${devScope.decision || ""} (${(devScope.packages || []).length} pkgs)`, redact: REDACT });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    recordErrorForAutoheal({ pageId, stage, errorText: msg });
+    recordErrorForAutoheal({ pageId, stage: "Ready for Dev", errorText: msg });
     writeEvent({ root: ROOT, runId, kind: "SCOPE_DEV_FAIL", text: msg, redact: true });
   }
 
@@ -517,7 +518,7 @@ async function processReadyForDev(page, { humanFeedback = "" } = {}) {  // human
     });
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    recordErrorForAutoheal({ pageId, stage, errorText: msg });
+    recordErrorForAutoheal({ pageId, stage: "Dev", errorText: msg });
     await setLatestFeedback(pageId, msg);
     await setStatus(pageId, "Needs Changes");
     writeEvent({ root: ROOT, runId, kind: "DEV_FAIL", text: msg, redact: true });
@@ -627,6 +628,42 @@ function parseVerdict(reviewMarkdown) {
   const m = cleaned.match(/^[\s>#\-]*Verdict\s*:\s*(PASS|FAIL)\b/im);
   if (!m) return "";
   return m[1].toUpperCase();
+}
+
+function summarizeCiChecks(checkRunsData, { maxChars = 1500 } = {}) {
+  const runs = Array.isArray(checkRunsData?.check_runs) ? checkRunsData.check_runs : [];
+  if (!runs.length) return { state: "pass", summary: "CI: no check-runs reported (treat as pass)." };
+
+  const completed = runs.filter((r) => String(r?.status || "").toLowerCase() === "completed");
+  const pending = runs.filter((r) => String(r?.status || "").toLowerCase() !== "completed");
+
+  const failing = new Set(["failure", "cancelled", "timed_out", "action_required", "startup_failure", "stale"]);
+  const failed = completed.filter((r) => failing.has(String(r?.conclusion || "").toLowerCase()));
+
+  const state = failed.length ? "fail" : pending.length ? "pending" : "pass";
+
+  const lines = [];
+  const fmtRun = (r) => {
+    const name = String(r?.name || r?.app?.name || "(check)");
+    const status = String(r?.status || "");
+    const conc = String(r?.conclusion || "");
+    const url = String(r?.details_url || "");
+    const outSum = String(r?.output?.summary || r?.output?.title || "").replace(/\s+/g, " ").trim();
+    const tail = outSum ? ` — ${outSum.slice(0, 220)}` : "";
+    return `- ${name}: ${status}${conc ? `/${conc}` : ""}${url ? ` (${url})` : ""}${tail}`;
+  };
+
+  if (state === "fail") {
+    lines.push(`CI: FAIL (${failed.length} failing / ${runs.length} total)`);
+    for (const r of failed.slice(0, 4)) lines.push(fmtRun(r));
+  } else if (state === "pending") {
+    lines.push(`CI: PENDING (${pending.length} running/queued / ${runs.length} total)`);
+    for (const r of pending.slice(0, 3)) lines.push(fmtRun(r));
+  } else {
+    lines.push(`CI: PASS (${completed.length} completed / ${runs.length} total)`);
+  }
+
+  return { state, summary: lines.join("\\n").slice(0, maxChars) };
 }
 
 async function processNeedsChanges(page) {
@@ -785,7 +822,7 @@ async function processInReview(page) {
   writeEvent({ root: ROOT, runId, kind: "REVIEW_FAIL", text: `Needs Changes: ${pr.html_url}`, redact: REDACT });
 }
 
-async function processReadyToMerge(page) {
+async function processReadyToMerge(page, { allowCiAutoFix = false } = {}) {
   const pageId = page.id;
   const issueUrl = readUrl(page, "GitHub Issue");
   const prUrl = readUrl(page, "GitHub PR");
@@ -828,8 +865,67 @@ async function processReadyToMerge(page) {
     return;
   }
 
-  // If approved for merge, attempt the merge (default method: squash).
+  const requireCiPass = boolEnv("PEREGRINE_REQUIRE_CI_PASS_TO_MERGE", true);
   const mergeApproved = readCheckbox(page, MERGE_APPROVED_PROP);
+
+  // CI gate (self-fixing): if checks are failing, bounce back to Needs Changes (only during active work sessions).
+  if (requireCiPass) {
+    try {
+      const sha = pr.head?.sha;
+      if (sha) {
+        const data = await listCheckRunsForRef({ repo, ref: sha });
+        const ci = summarizeCiChecks(data);
+
+        if (ci.state === "pending") {
+          await setLatestFeedback(pageId, `CI pending — waiting.
+
+${ci.summary}`.slice(0, 2000));
+          return;
+        }
+
+        if (ci.state === "fail") {
+          // Prevent an infinite merge-attempt loop.
+          if (mergeApproved) {
+            try {
+              await updatePage(pageId, {
+                [MERGE_APPROVED_PROP]: { checkbox: false },
+              });
+            } catch {
+              // ignore
+            }
+          }
+
+          const feedback = `CI failing — cannot merge yet.
+
+${ci.summary}`.slice(0, 2000);
+          await setLatestFeedback(pageId, feedback);
+
+          if (allowCiAutoFix) {
+            await setStatus(pageId, "Needs Changes");
+            writeStatus({
+              root: ROOT,
+              runId,
+              status: "Needs Changes",
+              repo,
+              notionUrl: notionPageUrl(page),
+              issueUrl: issue.html_url,
+              prUrl: pr.html_url,
+              redact: REDACT,
+            });
+            writeEvent({ root: ROOT, runId, kind: "CI_FAIL", text: `Needs Changes (CI failing): ${pr.html_url}`, redact: REDACT });
+          }
+
+          return;
+        }
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      await setLatestFeedback(pageId, `CI check fetch failed (ignored): ${msg}`.slice(0, 2000));
+      // Continue without CI gating.
+    }
+  }
+
+  // If approved for merge, attempt the merge (default method: squash).
   if (mergeApproved) {
     const methodRaw = (readSelect(page, MERGE_METHOD_PROP) || "squash").toLowerCase();
     const mergeMethod = methodRaw === "merge" || methodRaw === "rebase" || methodRaw === "squash" ? methodRaw : "squash";
@@ -890,6 +986,7 @@ async function processReadyToMerge(page) {
 
   // If still open, do nothing.
 }
+
 
 async function safeHandle(page, { stage = "" } = {}, fn) {
   // Notion pages are blocks; archived/in_trash pages cannot be edited and will throw:
@@ -1006,6 +1103,14 @@ async function main() {
     // ignore
   }
 
+  // Best-effort: ensure the Kanban Status select has the core workflow options so setStatus() doesn't strand cards in Error.
+  // This is cheap and helps both the heavy workflow and merge-only ticks.
+  try {
+    await ensureSelectOptions({ propName: "Status", optionNames: REQUIRED_STATUSES });
+  } catch {
+    // ignore
+  }
+
   // Defaults (can be overridden by Work Session controls)
   let max = intEnv("PEREGRINE_MAX_ITEMS", 10);
   let maxLlmActions = intEnv("PEREGRINE_MAX_LLM_ACTIONS_PER_TICK", max);
@@ -1016,62 +1121,72 @@ async function main() {
   let sessionActionsUsedStart = 0;
   let sessionActionsUsedDelta = 0;
 
-  // Global on/off switch + configurable cadence (prevents any GitHub/LLM work when off).
+  // Global on/off switch (prevents any GitHub/LLM work when off).
   const ctl = await getAiFlowControl();
   if (!ctl.enabled) {
     console.log("Peregrine: AI flow disabled via Notion master switch; exiting tick.");
     return;
   }
 
-  // Work Session gating: PM controls when the automation is allowed to do any work.
-  if (!ctl.workSessionEnabled) {
-    console.log("Peregrine: work session disabled; exiting tick.");
-    return;
-  }
-
   const now = Date.now();
-  if (ctl.workSessionEndsAtMs && now > ctl.workSessionEndsAtMs) {
-    console.log("Peregrine: work session ended; disabling work session + AI flow.");
+
+  // Heavy work = LLM-driven steps (PRD/dev/review) which should only run during an explicit work session.
+  let heavyAllowed = Boolean(ctl.workSessionEnabled);
+
+  // If the work session has ended, disable it (but keep AI Flow enabled so merges can still be processed).
+  if (heavyAllowed && ctl.workSessionEndsAtMs && now > ctl.workSessionEndsAtMs) {
+    console.log("Peregrine: work session ended; disabling work session.");
+    heavyAllowed = false;
     if (ctl.pageId) {
       try {
         await updatePage(ctl.pageId, {
           [CONTROL_WORK_SESSION_ENABLED]: { checkbox: false },
-          "AI Flow Enabled": { checkbox: false },
+          [CONTROL_WORK_SESSION_ENDS_AT]: { date: null },
         });
       } catch {
         // ignore
       }
     }
-    return;
   }
 
   // Work session overrides
-  if (typeof ctl.workSessionMaxItems === "number" && ctl.workSessionMaxItems > 0) {
-    max = Math.max(1, Math.round(ctl.workSessionMaxItems));
-  }
-  if (typeof ctl.workSessionMaxLlmActions === "number" && ctl.workSessionMaxLlmActions > 0) {
-    maxLlmActions = Math.max(1, Math.round(ctl.workSessionMaxLlmActions));
+  if (heavyAllowed) {
+    if (typeof ctl.workSessionMaxItems === "number" && ctl.workSessionMaxItems > 0) {
+      max = Math.max(1, Math.round(ctl.workSessionMaxItems));
+    }
+    if (typeof ctl.workSessionMaxLlmActions === "number" && ctl.workSessionMaxLlmActions > 0) {
+      maxLlmActions = Math.max(1, Math.round(ctl.workSessionMaxLlmActions));
+    }
   }
 
   sessionActionBudget = Math.max(0, Math.round(ctl.workSessionActionBudget || 0));
   sessionActionsUsedStart = Math.max(0, Math.round(ctl.workSessionActionsUsed || 0));
 
-  if (sessionActionBudget > 0 && sessionActionsUsedStart >= sessionActionBudget) {
-    console.log("Peregrine: work session LLM action budget exhausted; disabling work session + AI flow.");
+  if (heavyAllowed && sessionActionBudget > 0 && sessionActionsUsedStart >= sessionActionBudget) {
+    console.log("Peregrine: work session LLM action budget exhausted; disabling work session.");
+    heavyAllowed = false;
     if (ctl.pageId) {
       try {
         await updatePage(ctl.pageId, {
           [CONTROL_WORK_SESSION_ENABLED]: { checkbox: false },
-          "AI Flow Enabled": { checkbox: false },
         });
       } catch {
         // ignore
       }
     }
-    return;
   }
 
+  // Cadence: apply interval rules only to heavy work (merges can still be processed any tick).
+  let heavyDue = true;
+  if (!ctl.runNow && ctl.intervalMin > 0 && ctl.lastRunAtMs > 0) {
+    const elapsedMs = now - ctl.lastRunAtMs;
+    heavyDue = elapsedMs >= ctl.intervalMin * 60_000;
+  }
+
+  const doHeavy = heavyAllowed && heavyDue;
+
   async function handleLlmAction(page, stage, fn) {
+    if (!doHeavy) return false;
     if (llmActions >= maxLlmActions) return false;
     if (sessionActionBudget > 0 && sessionActionsUsedStart + sessionActionsUsedDelta >= sessionActionBudget) return false;
     llmActions += 1;
@@ -1080,16 +1195,9 @@ async function main() {
     return true;
   }
 
-  if (!ctl.runNow && ctl.intervalMin > 0 && ctl.lastRunAtMs > 0) {
-    const elapsedMs = Date.now() - ctl.lastRunAtMs;
-    if (elapsedMs < ctl.intervalMin * 60_000) {
-      return; // too soon; noop
-    }
-  }
-
-  // Stamp last-run at start so overlapping cron triggers don't double-run.
+  // Stamp last-run ONLY when we actually run heavy work, so interval throttling behaves as expected.
   // Also auto-clear "Run Now" so it behaves like a one-shot trigger.
-  if (ctl.pageId) {
+  if (doHeavy && ctl.pageId) {
     try {
       await updatePage(ctl.pageId, {
         "AI Tick Last Run": { date: { start: new Date().toISOString() } },
@@ -1100,69 +1208,65 @@ async function main() {
     }
   }
 
-  // Keep the Target Repo dropdown in sync with repos the GitHub App can access.
-  // Best-effort: never fail the whole tick if this breaks.
-  try {
-    const repos = await listInstallationRepos({ perPage: 100 });
-    await ensureSelectOptions({ propName: "Target Repo (select)", optionNames: repos });
-  } catch {
-    // ignore
-  }
-
-  // Best-effort: ensure the Kanban Status select has the core workflow options so setStatus() doesn't strand cards in Error.
-  try {
-    await ensureSelectOptions({ propName: "Status", optionNames: REQUIRED_STATUSES });
-  } catch {
-    // ignore
-  }
-
-  // If Intake auto-splitting is enabled, ensure the Epic status option exists.
-  // Best-effort: only works when Status is a select property.
-  if (INTAKE_AUTOSPLIT) {
+  // Heavy workflow (PRD/dev/review loops)
+  if (doHeavy) {
+    // Keep the Target Repo dropdown in sync with repos the GitHub App can access.
+    // Best-effort: never fail the whole tick if this breaks.
     try {
-      await ensureSelectOptions({ propName: "Status", optionNames: [EPIC_STATUS] });
+      const repos = await listInstallationRepos({ perPage: 100 });
+      await ensureSelectOptions({ propName: "Target Repo (select)", optionNames: repos });
     } catch {
       // ignore
     }
+
+    // If Intake auto-splitting is enabled, ensure the Epic status option exists.
+    // Best-effort: only works when Status is a select property.
+    if (INTAKE_AUTOSPLIT) {
+      try {
+        await ensureSelectOptions({ propName: "Status", optionNames: [EPIC_STATUS] });
+      } catch {
+        // ignore
+      }
+    }
+
+    // Intake
+    const intake = await queryItemsByStatus("Intake");
+    const intakeItems = (intake.results ?? []).slice(0, max);
+    for (const page of intakeItems) {
+      const ok = await handleLlmAction(page, "Intake", async () => processIntake(page));
+      if (!ok) break;
+    }
+
+    // Ready for Dev
+    const ready = await queryItemsByStatus("Ready for Dev");
+    const readyItems = (ready.results ?? []).slice(0, max);
+    for (const page of readyItems) {
+      const ok = await handleLlmAction(page, "Ready for Dev", async () => processReadyForDev(page));
+      if (!ok) break;
+    }
+
+    // Needs Changes (rerun dev loop on same PR/branch, using Latest Feedback as guidance)
+    const needsChanges = await queryItemsByStatus("Needs Changes");
+    const needsChangesItems = (needsChanges.results ?? []).slice(0, max);
+    for (const page of needsChangesItems) {
+      const ok = await handleLlmAction(page, "Needs Changes", async () => processNeedsChanges(page));
+      if (!ok) break;
+    }
+
+    // In Review (automated PRD-vs-diff review; advances to Ready to Merge or back to Needs Changes)
+    const inReview = await queryItemsByStatus("In Review");
+    const inReviewItems = (inReview.results ?? []).slice(0, max);
+    for (const page of inReviewItems) {
+      const ok = await handleLlmAction(page, "In Review", async () => processInReview(page));
+      if (!ok) break;
+    }
   }
 
-  // Intake
-  const intake = await queryItemsByStatus("Intake");
-  const intakeItems = (intake.results ?? []).slice(0, max);
-  for (const page of intakeItems) {
-    const ok = await handleLlmAction(page, "Intake", async () => processIntake(page));
-    if (!ok) break;
-  }
-
-  // Ready for Dev
-  const ready = await queryItemsByStatus("Ready for Dev");
-  const readyItems = (ready.results ?? []).slice(0, max);
-  for (const page of readyItems) {
-    const ok = await handleLlmAction(page, "Ready for Dev", async () => processReadyForDev(page));
-    if (!ok) break;
-  }
-
-  // Needs Changes (rerun dev loop on same PR/branch, using Latest Feedback as guidance)
-  const needsChanges = await queryItemsByStatus("Needs Changes");
-  const needsChangesItems = (needsChanges.results ?? []).slice(0, max);
-  for (const page of needsChangesItems) {
-    const ok = await handleLlmAction(page, "Needs Changes", async () => processNeedsChanges(page));
-    if (!ok) break;
-  }
-
-  // In Review (automated PRD-vs-diff review; advances to Ready to Merge or back to Needs Changes)
-  const inReview = await queryItemsByStatus("In Review");
-  const inReviewItems = (inReview.results ?? []).slice(0, max);
-  for (const page of inReviewItems) {
-    const ok = await handleLlmAction(page, "In Review", async () => processInReview(page));
-    if (!ok) break;
-  }
-
-  // Ready to Merge (if PR merged, mark Done)
+  // Ready to Merge should ALWAYS run (even outside a work session) so approvals can merge promptly.
   const readyToMerge = await queryItemsByStatus("Ready to Merge");
   const readyToMergeItems = (readyToMerge.results ?? []).slice(0, max);
   for (const page of readyToMergeItems) {
-    await safeHandle(page, { stage: "Ready to Merge" }, async () => processReadyToMerge(page));
+    await safeHandle(page, { stage: "Ready to Merge" }, async () => processReadyToMerge(page, { allowCiAutoFix: doHeavy }));
   }
 
   // Error auto-heal (first-time only per distinct error signature)
