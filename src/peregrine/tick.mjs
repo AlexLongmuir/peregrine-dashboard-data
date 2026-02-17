@@ -14,12 +14,14 @@ import os from "node:os";
 import path from "node:path";
 
 import {
+  createCard,
   ensureSelectOptions,
   queryItemsByName,
   queryItemsByStatus,
   readCheckbox,
   readDateStart,
   readNumber,
+  readRelationIds,
   readRichText,
   readTargetRepo,
   readTitle,
@@ -87,6 +89,28 @@ async function processIntake(page) {
 
   writeEvent({ root: ROOT, runId, kind: "INTAKE", text: `Notion intake received: ${title}`, redact: REDACT });
 
+  // If this is already split (has children) but is still in Intake, just move it to Epic.
+  if (!isChild && existingChildren.length > 0) {
+    await setLatestFeedback(pageId, `Already split into ${existingChildren.length} child card(s). Each child will create its own issue/PR. (Parent auto-moved out of Intake.)`);
+    try {
+      await setStatus(pageId, epicStatus);
+    } catch {
+      await setStatus(pageId, "PRD Drafted");
+    }
+
+    writeStatus({
+      root: ROOT,
+      runId,
+      status: epicStatus,
+      repo: targetRepo,
+      notionUrl: notionPageUrl(page),
+      issueUrl: "",
+      prUrl: "",
+      redact: REDACT,
+    });
+    return;
+  }
+
   // Scope triage (best-effort): decide single vs split and propose work packages.
   let scope = null;
   try {
@@ -98,6 +122,112 @@ async function processIntake(page) {
     writeEvent({ root: ROOT, runId, kind: "SCOPE_FAIL", text: msg, redact: true });
   }
 
+  const shouldSplit = !isChild && scope?.decision === "split" && Array.isArray(scope?.packages) && scope.packages.length > 1;
+
+  // Auto-split: generate child cards (each will become its own Issue + PR), mark parent as Epic.
+  if (shouldSplit) {
+    const pkgs = scope.packages.slice(0, MAX_PACKAGES);
+
+    const childPages = [];
+    let relationWorked = true;
+
+    for (let i = 0; i < pkgs.length; i += 1) {
+      const p = pkgs[i] || {};
+      const n = pkgs.length;
+
+      const childTitle = `${title} — ${i + 1}/${n} ${String(p.name || "").trim()}`.slice(0, 250).trim();
+      const childRough = [
+        `Parent: ${title}`,
+        `Target repo: ${targetRepo}`,
+        ``,
+        `Work package ${i + 1}/${n}: ${String(p.name || "").trim()}`,
+        String(p.goal || "") ? `Goal: ${String(p.goal || "").trim()}` : null,
+        Array.isArray(p.acceptance_criteria_subset) && p.acceptance_criteria_subset.length
+          ? ["Acceptance criteria:", ...p.acceptance_criteria_subset.slice(0, 8).map((x) => `- ${x}`)].join("\n")
+          : null,
+        Array.isArray(p.likely_files_areas) && p.likely_files_areas.length
+          ? ["Likely areas:", ...p.likely_files_areas.slice(0, 8).map((x) => `- ${x}`)].join("\n")
+          : null,
+        Array.isArray(p.deps) && p.deps.length ? `Depends on: ${p.deps.join(", ")}` : null,
+        String(p.risk || "") ? `Risk: ${String(p.risk || "").trim()}` : null,
+      ]
+        .filter(Boolean)
+        .join("\n")
+        .slice(0, 2000);
+
+      // Try to set Parent relation; if the property doesn't exist, fall back to no relation.
+      let child;
+      try {
+        child = await createCard({
+          title: childTitle,
+          roughDraft: childRough,
+          targetRepo,
+          status: "Intake",
+          extraProperties: {
+            [parentRelProp]: { relation: [{ id: pageId }] },
+          },
+        });
+      } catch (e) {
+        relationWorked = false;
+        child = await createCard({ title: childTitle, roughDraft: childRough, targetRepo, status: "Intake" });
+      }
+
+      childPages.push(child);
+    }
+
+    const childLinks = childPages
+      .map((c, idx) => {
+        const url = c?.url || "";
+        return `- ${idx + 1}. ${url || "(created)"}`;
+      })
+      .join("\n");
+
+    await setLatestFeedback(
+      pageId,
+      [
+        `Auto-split into ${childPages.length} child card(s). Each child will generate its own GitHub Issue + PR.`,
+        relationWorked ? null : `Note: Couldn't set Notion relation property "${parentRelProp}" (missing or misnamed). Child cards were still created.`,
+        "",
+        childLinks,
+      ]
+        .filter(Boolean)
+        .join("\n")
+        .slice(0, 2000)
+    );
+
+    // Mark parent as Epic so it doesn't create its own Issue/PR.
+    try {
+      await setStatus(pageId, epicStatus);
+    } catch {
+      await setStatus(pageId, "PRD Drafted");
+    }
+
+    // Mirror name so it's visually obvious this is not a leaf card.
+    try {
+      await updatePage(pageId, {
+        Name: { title: [{ text: { content: `EPIC: ${title}`.slice(0, 250) } }] },
+      });
+    } catch {
+      // ignore
+    }
+
+    writeEvent({ root: ROOT, runId, kind: "SPLIT", text: `Auto-split into ${childPages.length} child card(s).`, redact: REDACT });
+
+    writeStatus({
+      root: ROOT,
+      runId,
+      status: epicStatus,
+      repo: targetRepo,
+      notionUrl: notionPageUrl(page),
+      issueUrl: "",
+      prUrl: "",
+      redact: REDACT,
+    });
+
+    return;
+  }
+
+  // Default behavior (leaf card): PRD rewrite + GitHub Issue
   const prd = await rewritePrdFromIntake({ title, roughDraft, targetRepo, scope });
   writePrd({ root: ROOT, runId, prdMarkdown: prd.body, redact: REDACT });
 
@@ -187,7 +317,7 @@ async function processReadyForDev(page, { humanFeedback = "" } = {}) {  // human
       dir: tmp,
       prdBody,
       plan,
-      maxIters: 2,
+      maxIters: intEnv("PEREGRINE_DEV_MAX_ITERS", 2),
       humanFeedback,
       packages: Array.isArray(devScope?.packages) ? devScope.packages : null,
       maxPackages: MAX_PACKAGES,
@@ -546,6 +676,15 @@ async function getAiFlowControl() {
 
 async function main() {
   const max = intEnv("PEREGRINE_MAX_ITEMS", 10);
+  const maxLlmActions = intEnv("PEREGRINE_MAX_LLM_ACTIONS_PER_TICK", max);
+  let llmActions = 0;
+
+  async function handleLlmAction(page, fn) {
+    if (llmActions >= maxLlmActions) return false;
+    llmActions += 1;
+    await safeHandle(page, fn);
+    return true;
+  }
 
   // Global on/off switch + configurable cadence (prevents any GitHub/LLM work when off).
   const ctl = await getAiFlowControl();
@@ -581,32 +720,44 @@ async function main() {
     // ignore
   }
 
+  // Ensure Epic status option exists (used when auto-splitting Intake into child cards).
+  try {
+    const epicStatus = process.env.PEREGRINE_EPIC_STATUS || "Epic";
+    await ensureSelectOptions({ propName: "Status", optionNames: [epicStatus] });
+  } catch {
+    // ignore
+  }
+
   // Intake
   const intake = await queryItemsByStatus("Intake");
   const intakeItems = (intake.results ?? []).slice(0, max);
   for (const page of intakeItems) {
-    await safeHandle(page, async () => processIntake(page));
+    const ok = await handleLlmAction(page, async () => processIntake(page));
+    if (!ok) break;
   }
 
   // Ready for Dev
   const ready = await queryItemsByStatus("Ready for Dev");
   const readyItems = (ready.results ?? []).slice(0, max);
   for (const page of readyItems) {
-    await safeHandle(page, async () => processReadyForDev(page));
+    const ok = await handleLlmAction(page, async () => processReadyForDev(page));
+    if (!ok) break;
   }
 
   // Needs Changes (rerun dev loop on same PR/branch, using Latest Feedback as guidance)
   const needsChanges = await queryItemsByStatus("Needs Changes");
   const needsChangesItems = (needsChanges.results ?? []).slice(0, max);
   for (const page of needsChangesItems) {
-    await safeHandle(page, async () => processNeedsChanges(page));
+    const ok = await handleLlmAction(page, async () => processNeedsChanges(page));
+    if (!ok) break;
   }
 
   // In Review (automated PRD-vs-diff review; advances to Ready to Merge or back to Needs Changes)
   const inReview = await queryItemsByStatus("In Review");
   const inReviewItems = (inReview.results ?? []).slice(0, max);
   for (const page of inReviewItems) {
-    await safeHandle(page, async () => processInReview(page));
+    const ok = await handleLlmAction(page, async () => processInReview(page));
+    if (!ok) break;
   }
 
   // Ready to Merge (if PR merged, mark Done)

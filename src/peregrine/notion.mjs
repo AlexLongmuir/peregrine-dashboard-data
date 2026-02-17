@@ -168,6 +168,12 @@ export function readDateStart(page, prop) {
   return page.properties?.[prop]?.date?.start ?? "";
 }
 
+export function readRelationIds(page, prop) {
+  const rel = page.properties?.[prop]?.relation;
+  if (!Array.isArray(rel)) return [];
+  return rel.map((r) => r?.id).filter(Boolean);
+}
+
 // Target repo helper (supports both legacy rich_text and new dropdown select)
 export function readTargetRepo(page) {
   const fromSelect = readSelect(page, "Target Repo (select)") || readSelect(page, "Target Repo");
@@ -218,9 +224,15 @@ export async function setLastError(pageId, text) {
   });
 }
 
+export async function setRelation(pageId, prop, pageIds) {
+  return updatePage(pageId, {
+    [prop]: { relation: (pageIds || []).map((id) => ({ id })) },
+  });
+}
+
 // ─── Create a page (new Kanban card) ──────────────────────────────────
 
-export async function createCard({ title, roughDraft, targetRepo, status = "Intake" }) {
+export async function createCard({ title, roughDraft, targetRepo, status = "Intake", extraProperties = {} }) {
   const dbId = requireEnv("NOTION_DATABASE_ID");
 
   // Prefer select; fallback to status.
@@ -234,6 +246,7 @@ export async function createCard({ title, roughDraft, targetRepo, status = "Inta
           "Rough Draft": { rich_text: [{ text: { content: roughDraft.slice(0, 2000) } }] },
           "Target Repo": { rich_text: [{ text: { content: targetRepo } }] },
           Status: { select: { name: status } },
+          ...extraProperties,
         },
       }),
     });
@@ -247,6 +260,7 @@ export async function createCard({ title, roughDraft, targetRepo, status = "Inta
           "Rough Draft": { rich_text: [{ text: { content: roughDraft.slice(0, 2000) } }] },
           "Target Repo": { rich_text: [{ text: { content: targetRepo } }] },
           Status: { status: { name: status } },
+          ...extraProperties,
         },
       }),
     });
