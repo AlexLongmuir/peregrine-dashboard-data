@@ -238,13 +238,17 @@ function normalizePackages(packages, maxPackages) {
 }
 
 function packageHintText(pkg) {
+  const deps = Array.isArray(pkg?.deps) ? pkg.deps.filter(Boolean).map(String) : [];
   return [
     pkg?.name,
     pkg?.goal,
-    ...(pkg?.acceptance_criteria_subset || []),
-    ...(pkg?.likely_files_areas || []),
-    ...(pkg?.deps || []).length ? `deps: ${(pkg?.deps || []).join(", ")}` : null,
+    ...(Array.isArray(pkg?.acceptance_criteria_subset) ? pkg.acceptance_criteria_subset : []),
+    ...(Array.isArray(pkg?.likely_files_areas) ? pkg.likely_files_areas : []),
+    ...(deps.length ? [`deps: ${deps.join(", ")}`] : []),
+    pkg?.risk ? `risk: ${pkg.risk}` : null,
   ]
+    .filter(Boolean)
+    .map((x) => String(x).trim())
     .filter(Boolean)
     .join("\n");
 }
