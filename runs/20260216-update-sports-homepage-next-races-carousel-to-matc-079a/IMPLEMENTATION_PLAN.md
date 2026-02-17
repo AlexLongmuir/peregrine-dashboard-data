@@ -1,8 +1,8 @@
 ## Summary
-Rebuild the mobile-only “Next Races” carousel on the Sports Homepage to match the Spreadex mobile homepage carousel (June 2024) exactly in DOM structure, CSS, and behavior. Keep the existing data source, add matching loading/empty/error/offline states, ensure accessibility, and instrument Mixpanel events.
+Rebuild the mobile-only “Next Races” carousel on the Sports Homepage to match the Spreadex mobile homepage carousel (June 2024) exactly in DOM structure, CSS, and behavior. Keep existing data source/selection logic, add matching loading/empty/error/offline states, accessibility, and Mixpanel telemetry.
 
 ## Steps
 1. **Capture reference implementation**
-   - Inspect https://www.spreade
+   - Inspect https://www.spreadex.c
 
 [REDACTED]
