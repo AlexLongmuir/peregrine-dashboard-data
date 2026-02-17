@@ -1,2 +1,5 @@
 - 2026-02-17T08:05:11.439Z **INTAKE** — Notion intake received: Vercel deployment failing after merging Header (spreadex-mobile-ui)
 - 2026-02-17T08:30:21.388Z **ERROR** — Missing or invalid GitHub Issue URL on card: 
+- 2026-02-17T09:05:09.169Z **INTAKE** — Notion intake received: Vercel deployment failing after merging Header (spreadex-mobile-ui)
+- 2026-02-17T09:05:23.195Z **SCOPE** — Scope triage: split
+- 2026-02-17T09:05:30.123Z **ERROR** — Notion 400: {"object":"error","status":400,"code":"validation_error","message":"Target Repo is not a property that exists. Status is expected to be select.","request_id":"495497c3-055e-40ad-bd7c-998d88cc1567"}

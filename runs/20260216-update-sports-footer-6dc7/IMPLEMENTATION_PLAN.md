@@ -1,14 +1,4 @@
-# Implementation Plan: Spreadex Mobile Footer Replica
-
 ## Summary
-
-Replicate the Spreadex mobile homepage footer exactly (HTML, CSS, layout, icons, interactivity) in our mobile UI. Ensure pixel-perfect match, responsive behavior, accessibility, error handling, and telemetry as per PRD.
-
----
-
-## Steps
-
-1. **Reference Analysis**
-   - Inspect and extract the HTML/CSS structure and assets (SVGs/icons)
+Implement a new mobile sports footer component that is a pixel-for-pixel replica of the footer on `https://www.spreadex.com/sports/mobile/homepage` (375px reference), including identical structure, styling, icons, active state, and interactions. Add offline/coming-soon behaviors, fatal-render error banner, accessibility labels, and Mixpanel telemetry for link clicks—without changing any
 
 [REDACTED]
