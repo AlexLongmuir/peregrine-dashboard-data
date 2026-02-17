@@ -1,13 +1,7 @@
-## Diff stat
+## Work packages
 
+- 1. **Footer UI parity** — Rebuild the mobile sports footer to match the reference page pixel-for-pixel at 375px and remain responsive across supported widths.
+- 2. **Footer behavior (links/offline/error)** — Implement footer link navigation behavior, including 'coming soon' and offline toasts, plus a fatal render error banner fallback.
+- 3. **Telemetry + tests** — Add Mixpanel 
 
-```
- src/components/mobile/BottomNav.tsx             |  72 ++++---
- src/components/mobile/homepage/HomepageView.tsx | 251 +-----------------------
- 2 files changed, 45 insertions(+), 278 deletions(-)
-
-```
-
-## Changed files
-- src/components/mobile/BottomNav.tsx
-- src/components/mobile/homepage/HomepageView.tsx
+[REDACTED]

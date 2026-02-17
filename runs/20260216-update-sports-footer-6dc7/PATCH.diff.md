@@ -1,13 +1,12 @@
 diff --git a/src/components/mobile/BottomNav.tsx b/src/components/mobile/BottomNav.tsx
-index ed06bce..b14adda 100644
+index b14adda..de7785d 100644
 --- a/src/components/mobile/BottomNav.tsx
 +++ b/src/components/mobile/BottomNav.tsx
-@@ -69,40 +69,23 @@ const footerLinks = [
-   },
- ];
+@@ -1,281 +1,295 @@
+ "use client";
  
--// Simulate router pathname for active state (replace with actual router in real app)
- function usePathname(): string {
--  const [pathname, setP
+-import React, { useState, useEffect } from "react";
++import React, { useCallback, useEffect, useRef, useState } from "react";
++import { usePathname, useRouter } 
 
 [REDACTED]
