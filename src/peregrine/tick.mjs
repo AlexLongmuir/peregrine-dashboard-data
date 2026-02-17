@@ -14,12 +14,14 @@ import os from "node:os";
 import path from "node:path";
 
 import {
+  createCard,
   ensureSelectOptions,
   queryItemsByName,
   queryItemsByStatus,
   readCheckbox,
   readDateStart,
   readNumber,
+  readRelationIds,
   readRichText,
   readTargetRepo,
   readTitle,
@@ -56,6 +58,10 @@ import { writeEvent, writeImplementation, writePatch, writePlan, writePrd, write
 const ROOT = process.cwd();
 const REDACT = boolEnv("PEREGRINE_REDACT_ARTIFACTS", true);
 const MAX_PACKAGES = intEnv("PEREGRINE_MAX_PACKAGES", 10);
+const INTAKE_AUTOSPLIT = boolEnv("PEREGRINE_INTAKE_AUTOSPLIT", false);
+const EPIC_STATUS = process.env.PEREGRINE_EPIC_STATUS || "Epic";
+const PARENT_REL_PROP = process.env.PEREGRINE_PARENT_RELATION_PROP || "Parent";
+const CHILDREN_REL_PROP = process.env.PEREGRINE_CHILDREN_RELATION_PROP || "Children";
 
 function notionPageUrl(page) {
   return page.url || "";
@@ -87,7 +93,48 @@ async function processIntake(page) {
 
   writeEvent({ root: ROOT, runId, kind: "INTAKE", text: `Notion intake received: ${title}`, redact: REDACT });
 
-  // (Notion card auto-splitting is disabled; Intake always proceeds to PRD + GitHub Issue.)
+  const hasParentRel = Boolean(page?.properties?.[PARENT_REL_PROP]?.type === "relation" || page?.properties?.[PARENT_REL_PROP]?.relation);
+  const hasChildrenRel = Boolean(page?.properties?.[CHILDREN_REL_PROP]?.type === "relation" || page?.properties?.[CHILDREN_REL_PROP]?.relation);
+  const autosplitReady = INTAKE_AUTOSPLIT && hasParentRel && hasChildrenRel;
+
+  const isChild = autosplitReady ? readRelationIds(page, PARENT_REL_PROP).length > 0 : false;
+  const existingChildren = autosplitReady ? readRelationIds(page, CHILDREN_REL_PROP) : [];
+
+  // If this is already split (has children) but is still in Intake, move it to Epic and STOP.
+  if (autosplitReady && !isChild && existingChildren.length > 0) {
+    await setLatestFeedback(
+      pageId,
+      `Already split into ${existingChildren.length} child card(s). Each child will create its own issue/PR. (Parent auto-moved out of Intake.)`
+    );
+    try {
+      await setStatus(pageId, EPIC_STATUS);
+    } catch {
+      // If Epic status isn't configured in Notion, don't fail the tick.
+      await setStatus(pageId, "PRD Drafted");
+    }
+
+    writeStatus({
+      root: ROOT,
+      runId,
+      status: EPIC_STATUS,
+      repo: targetRepo,
+      notionUrl: notionPageUrl(page),
+      issueUrl: "",
+      prUrl: "",
+      redact: REDACT,
+    });
+    return;
+  }
+
+  if (INTAKE_AUTOSPLIT && !autosplitReady) {
+    writeEvent({
+      root: ROOT,
+      runId,
+      kind: "SPLIT_SKIP",
+      text: `Auto-split enabled but Notion relation props not available (expected "${PARENT_REL_PROP}" and "${CHILDREN_REL_PROP}")`,
+      redact: REDACT,
+    });
+  }
 
   // Scope triage (best-effort): decide single vs split and propose work packages.
   let scope = null;
@@ -98,6 +145,123 @@ async function processIntake(page) {
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
     writeEvent({ root: ROOT, runId, kind: "SCOPE_FAIL", text: msg, redact: true });
+  }
+
+  // Auto-split Intake into child cards (Epic + children)
+  const shouldSplit = autosplitReady && !isChild && scope?.decision === "split" && Array.isArray(scope?.packages) && scope.packages.length > 1;
+  if (shouldSplit) {
+    const pkgs = (scope.packages || []).slice(0, MAX_PACKAGES);
+
+    const childPages = [];
+    let relationWorked = true;
+
+    for (let i = 0; i < pkgs.length; i += 1) {
+      const p = pkgs[i] || {};
+      const n = pkgs.length;
+
+      const childTitle = `${title} — ${i + 1}/${n} ${String(p.name || "").trim()}`.slice(0, 250).trim();
+      const childRough = [
+        `Parent: ${title}`,
+        `Target repo: ${targetRepo}`,
+        ``,
+        `Work package ${i + 1}/${n}: ${String(p.name || "").trim()}`,
+        String(p.goal || "") ? `Goal: ${String(p.goal || "").trim()}` : null,
+        Array.isArray(p.acceptance_criteria_subset) && p.acceptance_criteria_subset.length
+          ? ["Acceptance criteria:", ...p.acceptance_criteria_subset.slice(0, 8).map((x) => `- ${x}`)].join("\n")
+          : null,
+        Array.isArray(p.likely_files_areas) && p.likely_files_areas.length
+          ? ["Likely areas:", ...p.likely_files_areas.slice(0, 8).map((x) => `- ${x}`)].join("\n")
+          : null,
+        Array.isArray(p.deps) && p.deps.length ? `Depends on: ${p.deps.join(", ")}` : null,
+        String(p.risk || "") ? `Risk: ${String(p.risk || "").trim()}` : null,
+      ]
+        .filter(Boolean)
+        .join("\n")
+        .slice(0, 2000);
+
+      let child;
+      try {
+        // Best-effort: set Parent relation and Target Repo (select). Fall back gracefully if props don't exist.
+        child = await createCard({
+          title: childTitle,
+          roughDraft: childRough,
+          targetRepo,
+          status: "Intake",
+          extraProperties: {
+            [PARENT_REL_PROP]: { relation: [{ id: pageId }] },
+            "Target Repo (select)": { select: { name: targetRepo } },
+          },
+        });
+      } catch (e1) {
+        try {
+          child = await createCard({
+            title: childTitle,
+            roughDraft: childRough,
+            targetRepo,
+            status: "Intake",
+            extraProperties: {
+              [PARENT_REL_PROP]: { relation: [{ id: pageId }] },
+            },
+          });
+        } catch (e2) {
+          relationWorked = false;
+          child = await createCard({ title: childTitle, roughDraft: childRough, targetRepo, status: "Intake" });
+        }
+      }
+
+      childPages.push(child);
+    }
+
+    const childLinks = childPages
+      .map((c, idx) => {
+        const url = c?.url || "";
+        return `- ${idx + 1}. ${url || "(created)"}`;
+      })
+      .join("\n");
+
+    await setLatestFeedback(
+      pageId,
+      [
+        `Auto-split into ${childPages.length} child card(s). Each child will generate its own GitHub Issue + PR.`,
+        relationWorked ? null : `Note: Couldn't set Notion relation property "${PARENT_REL_PROP}" (missing or misnamed). Child cards were still created.`,
+        "",
+        childLinks,
+      ]
+        .filter(Boolean)
+        .join("\n")
+        .slice(0, 2000)
+    );
+
+    // Mark parent as Epic so it doesn't create its own Issue/PR.
+    try {
+      await setStatus(pageId, EPIC_STATUS);
+    } catch {
+      await setStatus(pageId, "PRD Drafted");
+    }
+
+    // Mirror name so it's visually obvious this is not a leaf card.
+    try {
+      await updatePage(pageId, {
+        Name: { title: [{ text: { content: `EPIC: ${title}`.slice(0, 250) } }] },
+      });
+    } catch {
+      // ignore
+    }
+
+    writeEvent({ root: ROOT, runId, kind: "SPLIT", text: `Auto-split into ${childPages.length} child card(s).`, redact: REDACT });
+
+    writeStatus({
+      root: ROOT,
+      runId,
+      status: EPIC_STATUS,
+      repo: targetRepo,
+      notionUrl: notionPageUrl(page),
+      issueUrl: "",
+      prUrl: "",
+      redact: REDACT,
+    });
+
+    return;
   }
 
   // Default behavior (leaf card): PRD rewrite + GitHub Issue
@@ -593,7 +757,15 @@ async function main() {
     // ignore
   }
 
-  // (No extra Notion status options needed)
+  // If Intake auto-splitting is enabled, ensure the Epic status option exists.
+  // Best-effort: only works when Status is a select property.
+  if (INTAKE_AUTOSPLIT) {
+    try {
+      await ensureSelectOptions({ propName: "Status", optionNames: [EPIC_STATUS] });
+    } catch {
+      // ignore
+    }
+  }
 
   // Intake
   const intake = await queryItemsByStatus("Intake");
