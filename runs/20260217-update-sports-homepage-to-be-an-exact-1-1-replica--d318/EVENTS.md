@@ -1,0 +1,3 @@
+- 2026-02-17T09:45:15.726Z **INTAKE** — Notion intake received: Update Sports Homepage to be an exact 1:1 replica of Spreadex Site
+- 2026-02-17T09:45:29.428Z **SCOPE** — Scope triage: split
+- 2026-02-17T09:45:34.578Z **SPLIT** — Auto-split into 3 child card(s).

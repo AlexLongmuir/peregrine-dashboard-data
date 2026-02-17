@@ -1,10 +1,10 @@
 # Scope triage
 
-- Updated: 2026-02-17T09:40:47.596Z
+- Updated: 2026-02-17T09:46:11.958Z
 
 ```json
 {
   "decision": "split",
-  "rationale": "This PRD mixes a pixel-perfect UI rebuild (HTML/CSS/icons/states) with behavioral requirements (routing fallbacks, offline handling, fatal render error banner) and telemetry. Splitting into sequential packages reduces risk: first lock the visual/footer component and responsiveness, then add naviga
+  "rationale": "This touches multiple concerns (pixel-perfect UI/CSS parity, navigation/link mapping with fallbacks, offline/error handling, telemetry, and tests). Splitting into sequential packages reduces risk by making the footer UI verifiable first, then layering behavior/telemetry, then hardening with tests 
 
 [REDACTED]
