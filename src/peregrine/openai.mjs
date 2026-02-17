@@ -1,5 +1,8 @@
 /**
  * OpenAI helpers for PRD/Dev/Review.
+ *
+ * Note: Some models (notably *-codex) are not supported on the legacy
+ * `v1/chat/completions` endpoint. We use the Responses API for all calls.
  */
 
 import OpenAI from "openai";
@@ -22,8 +25,38 @@ function parseJsonOrThrow(text, label) {
   }
 }
 
-export async function scopeTriageFromIntake({ title, roughDraft, targetRepo, maxPackages = 10 }) {
+function toResponsesInput({ system, user }) {
+  return [
+    system
+      ? {
+          role: "system",
+          content: [{ type: "input_text", text: system }],
+        }
+      : null,
+    user
+      ? {
+          role: "user",
+          content: [{ type: "input_text", text: user }],
+        }
+      : null,
+  ].filter(Boolean);
+}
+
+async function responsesText({ model: m, system, user, temperature = undefined, json = false }) {
   const openai = client();
+
+  const payload = {
+    model: m,
+    input: toResponsesInput({ system, user }),
+    ...(json ? { text: { format: { type: "json_object" } } } : {}),
+  };
+  if (typeof temperature === "number") payload.temperature = temperature;
+
+  const res = await openai.responses.create(payload);
+  return res.output_text ?? "";
+}
+
+export async function scopeTriageFromIntake({ title, roughDraft, targetRepo, maxPackages = 10 }) {
   const m = model("OPENAI_MODEL_PRD", "gpt-4.1");
 
   const system = `You are a pragmatic tech lead.
@@ -51,17 +84,9 @@ Rules:
 
   const user = `Target repo: ${targetRepo}\n\nIntake title: ${title}\n\nIntake rough draft (verbatim):\n${roughDraft}`;
 
-  const res = await openai.chat.completions.create({
-    model: m,
-    temperature: 0.1,
-    response_format: { type: "json_object" },
-    messages: [
-      { role: "system", content: system },
-      { role: "user", content: user },
-    ],
-  });
+  const text = await responsesText({ model: m, system, user, temperature: 0.1, json: true });
+  const json = parseJsonOrThrow(text, "Scope triage");
 
-  const json = parseJsonOrThrow(res.choices?.[0]?.message?.content, "Scope triage");
   return {
     decision: String(json.decision || ""),
     rationale: String(json.rationale || ""),
@@ -70,8 +95,8 @@ Rules:
 }
 
 export async function scopeTriageFromPrd({ prdBody, maxPackages = 10 }) {
-  const openai = client();
-  const m = model("OPENAI_MODEL_DEV", "gpt-4.1");
+  // Use PRD model (not dev/codex) because some codex models don't support sampling params.
+  const m = model("OPENAI_MODEL_PRD", "gpt-4.1");
 
   const system = `You are a pragmatic tech lead.
 
@@ -96,17 +121,9 @@ Rules:
 - Packages must be independently verifiable.
 - Keep it practical; no fluff.`;
 
-  const res = await openai.chat.completions.create({
-    model: m,
-    temperature: 0.1,
-    response_format: { type: "json_object" },
-    messages: [
-      { role: "system", content: system },
-      { role: "user", content: prdBody },
-    ],
-  });
+  const text = await responsesText({ model: m, system, user: prdBody, temperature: 0.1, json: true });
+  const json = parseJsonOrThrow(text, "Scope triage");
 
-  const json = parseJsonOrThrow(res.choices?.[0]?.message?.content, "Scope triage");
   return {
     decision: String(json.decision || ""),
     rationale: String(json.rationale || ""),
@@ -115,7 +132,6 @@ Rules:
 }
 
 export async function rewritePrdFromIntake({ title, roughDraft, targetRepo, scope = null }) {
-  const openai = client();
   const m = model("OPENAI_MODEL_PRD", "gpt-4.1");
 
   const system = `You are a senior product manager and tech lead. Convert messy intake into a crisp GitHub-issue PRD that is READY TO IMPLEMENT without requiring further input.
@@ -129,7 +145,6 @@ The body MUST be Markdown and include sections exactly in this order:
    - Non-goals
    - UX / UI notes (include loading/empty/error/offline states)
    - Acceptance Criteria (AC1, AC2, ...)
-   - Work packages (only if relevant; include when provided a scope triage or when the work is multi-part)
    - Telemetry (Mixpanel) (only if relevant)
    - RevenueCat impact (only if relevant)
    - Backend/API notes (only if relevant)
@@ -142,38 +157,24 @@ Rules:
 - If the intake is missing specifics, make reasonable best-guess assumptions and CHOOSE exact values so the dev bot can implement immediately.
   - Example: for copy/text changes, propose the exact final string(s) to use.
 - Acceptance Criteria MUST be objectively checkable and include any exact strings, numbers, or behaviors needed to implement.
-- If Work packages are included, list them in order, include the goal + what ACs they cover (or restate the outcome), and note dependencies.
 - Keep Open questions to a minimum. Only include items that truly require a human business decision; otherwise decide.
-- Do not invent nonexistent endpoints/services. If backend details are unknown, constrain scope to UI-only or clearly specify what to create.`;
+- Do not invent nonexistent endpoints/services. If backend details are unknown, constrain scope to UI-only or clearly specify what to create.
 
-  const user = [
-    `Target repo: ${targetRepo}`,
-    `Intake title: ${title}`,
-    `Intake rough draft (verbatim):\n${roughDraft}`,
-    scope ? `Scope triage (JSON, optional guidance):\n${JSON.stringify(scope, null, 2)}` : null,
-  ]
-    .filter(Boolean)
-    .join("\n\n");
+If scope triage is provided, include a short "Work packages" subsection under Revised PRD that lists each package (name + goal) in order.`;
 
-  const res = await openai.chat.completions.create({
-    model: m,
-    temperature: 0.2,
-    response_format: { type: "json_object" },
-    messages: [
-      { role: "system", content: system },
-      { role: "user", content: user },
-    ],
-  });
+  const scopeBlock = scope ? `\n\nScope triage JSON (best-effort):\n${JSON.stringify(scope).slice(0, 6000)}` : "";
+  const user = `Target repo: ${targetRepo}\n\nIntake title: ${title}\n\nIntake rough draft (verbatim):\n${roughDraft}${scopeBlock}`;
 
-  const json = parseJsonOrThrow(res.choices?.[0]?.message?.content, "PRD agent");
-  if (!json.title || !json.body) throw new Error(`PRD agent missing fields: ${String(res.choices?.[0]?.message?.content ?? "").slice(0, 300)}`);
+  const text = await responsesText({ model: m, system, user, temperature: 0.2, json: true });
+  const json = parseJsonOrThrow(text, "PRD agent");
 
+  if (!json.title || !json.body) throw new Error(`PRD agent missing fields: ${text.slice(0, 300)}`);
   return { title: String(json.title), body: String(json.body) };
 }
 
 export async function planDev({ prdBody }) {
-  const openai = client();
-  const m = model("OPENAI_MODEL_DEV", "gpt-4.1");
+  // Use PRD model for planning to keep DEV model reserved for code edits.
+  const m = model("OPENAI_MODEL_PRD", "gpt-4.1");
 
   const system = `You are a senior engineer. Produce a concise implementation plan for the PRD.
 Output MUST be Markdown with sections:
@@ -184,25 +185,13 @@ Output MUST be Markdown with sections:
 - Test plan
 - AC mapping (ACx -> how it's satisfied)`;
 
-  const res = await openai.chat.completions.create({
-    model: m,
-    temperature: 0.2,
-    messages: [
-      { role: "system", content: system },
-      { role: "user", content: prdBody },
-    ],
-  });
-
-  return res.choices?.[0]?.message?.content ?? "";
+  return responsesText({ model: m, system, user: prdBody, temperature: 0.2, json: false });
 }
 
 export async function generateEdits({ prdBody, plan, allowedPaths, repoFiles, candidateFiles, previousError, workPackage = null }) {
-  const openai = client();
   const m = model("OPENAI_MODEL_DEV", "gpt-4.1");
 
   const system = `You are a senior engineer. Implement the PRD by editing files.
-
-If a WORK_PACKAGE is provided, ONLY implement that package. Do NOT implement other packages yet.
 
 Output MUST be valid JSON with this shape:
 {
@@ -222,10 +211,12 @@ Hard requirements:
 
 Do NOT include markdown fences. JSON only.`;
 
+  const wp = workPackage ? `# Work package\n${JSON.stringify(workPackage).slice(0, 6000)}` : null;
+
   const user = [
-    workPackage ? `# WORK_PACKAGE (implement ONLY this)\n${JSON.stringify(workPackage, null, 2)}` : null,
     `# PRD\n\n${prdBody}`,
     `# Plan\n\n${plan}`,
+    wp,
     allowedPaths?.length ? `# ALLOWED_PATHS (choose from these ONLY)\n${allowedPaths.join("\n")}` : null,
     `# Repo file list (partial)\n${(repoFiles || []).slice(0, 2000).join("\n")}`,
     candidateFiles ? `# Candidate file contents\n${candidateFiles}` : null,
@@ -234,23 +225,15 @@ Do NOT include markdown fences. JSON only.`;
     .filter(Boolean)
     .join("\n\n");
 
-  const res = await openai.chat.completions.create({
-    model: m,
-    temperature: 0.1,
-    response_format: { type: "json_object" },
-    messages: [
-      { role: "system", content: system },
-      { role: "user", content: user },
-    ],
-  });
+  // Some codex models reject sampling params like temperature; omit them.
+  const text = await responsesText({ model: m, system, user, temperature: undefined, json: true });
+  const json = parseJsonOrThrow(text, "Dev agent");
 
-  const json = parseJsonOrThrow(res.choices?.[0]?.message?.content, "Dev agent");
-  if (!Array.isArray(json.files)) throw new Error(`Dev agent JSON missing files[]: ${String(res.choices?.[0]?.message?.content ?? "").slice(0, 300)}`);
+  if (!Array.isArray(json.files)) throw new Error(`Dev agent JSON missing files[]: ${text.slice(0, 300)}`);
   return json;
 }
 
 export async function reviewAgainstPrd({ prdBody, prDiffSummary, prBody }) {
-  const openai = client();
   const m = model("OPENAI_MODEL_REVIEW", "gpt-4.1");
 
   const system = `You are a strict but practical reviewer. Review implementation against the PRD and acceptance criteria.
@@ -280,14 +263,5 @@ Do not nitpick style unless it affects correctness/safety.`;
 
   const user = `PRD:\n${prdBody}\n\nPR description:\n${prBody}\n\nDiff summary:\n${prDiffSummary}`;
 
-  const res = await openai.chat.completions.create({
-    model: m,
-    temperature: 0.2,
-    messages: [
-      { role: "system", content: system },
-      { role: "user", content: user },
-    ],
-  });
-
-  return res.choices?.[0]?.message?.content ?? "";
+  return responsesText({ model: m, system, user, temperature: 0.2, json: false });
 }
