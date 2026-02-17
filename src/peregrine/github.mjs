@@ -140,10 +140,23 @@ export async function listInstallationRepos({ perPage = 100 } = {}) {
   return (res.data.repositories || []).map((r) => r.full_name).filter(Boolean);
 }
 
-export async function cloneRepo({ repo, dir, token }) {
+function repoHttpsUrl({ repo, token }) {
   const { owner, repo: name } = parseRepo(repo);
+  if (!token) return `https://github.com/${owner}/${name}.git`;
+  return `https://x-access-token:${token}@github.com/${owner}/${name}.git`;
+}
+
+export async function ensureOriginToken({ dir, repo, token } = {}) {
+  if (!dir || !repo) return { skipped: true };
   const t = token ?? (await getInstallationToken());
-  const url = `https://x-access-token:${t}@github.com/${owner}/${name}.git`;
+  const url = repoHttpsUrl({ repo, token: t });
+  sh("git", ["-C", dir, "remote", "set-url", "origin", url]);
+  return { skipped: false, token: t };
+}
+
+export async function cloneRepo({ repo, dir, token }) {
+  const t = token ?? (await getInstallationToken());
+  const url = repoHttpsUrl({ repo, token: t });
   sh("git", ["clone", "--depth", "1", url, dir]);
 }
 
@@ -156,8 +169,25 @@ export function gitCheckoutNewBranch({ dir, branch }) {
   sh("git", ["-C", dir, "checkout", "-b", branch]);
 }
 
-export function gitFetchBranch({ dir, branch }) {
-  sh("git", ["-C", dir, "fetch", "origin", `${branch}:${branch}`]);
+export async function gitFetchBranch({ dir, branch, repo, token } = {}) {
+  if (!dir || !branch) throw new Error(`gitFetchBranch missing dir/branch`);
+
+  // Some environments strip credentials or have a stale token; always refresh origin URL when we know the repo.
+  if (repo) await ensureOriginToken({ dir, repo, token });
+
+  try {
+    sh("git", ["-C", dir, "fetch", "origin", `${branch}:${branch}`]);
+    return { ok: true };
+  } catch (e) {
+    const msg = e instanceof Error ? (e.stderr || e.message || "") : String(e);
+    // Retry once with a fresh installation token on 401s.
+    if (repo && msg.includes("HTTP 401")) {
+      await ensureOriginToken({ dir, repo });
+      sh("git", ["-C", dir, "fetch", "origin", `${branch}:${branch}`]);
+      return { ok: true, retried: true };
+    }
+    throw e;
+  }
 }
 
 export function gitCheckoutBranch({ dir, branch }) {

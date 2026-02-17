@@ -38,6 +38,7 @@ import {
   commentOnIssue,
   createIssue,
   createPullRequest,
+  ensureOriginToken,
   getIssue,
   getPullRequest,
   listInstallationRepos,
@@ -340,7 +341,7 @@ async function processReadyForDev(page, { humanFeedback = "" } = {}) {  // human
     pr = await getPullRequest({ repo, prNumber: prRef.number });
     branch = pr.head?.ref || branch;
     // fetch and checkout branch
-    gitFetchBranch({ dir: tmp, branch });
+    await gitFetchBranch({ dir: tmp, branch, repo });
     gitCheckoutBranch({ dir: tmp, branch });
   } else {
     gitCheckoutNewBranch({ dir: tmp, branch });
@@ -558,6 +559,12 @@ async function processInReview(page) {
   // Compute a basic diff summary (git-based) for the reviewer model.
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), `peregrine-review-${runId}-`));
   await cloneRepo({ repo, dir: tmp });
+  // Best-effort: ensure origin URL includes a fresh token before additional fetches.
+  try {
+    await ensureOriginToken({ dir: tmp, repo });
+  } catch {
+    // ignore
+  }
 
   const baseRef = pr.base?.ref || "main";
   const headRef = pr.head?.ref;
