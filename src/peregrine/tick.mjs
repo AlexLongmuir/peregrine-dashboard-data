@@ -976,12 +976,47 @@ async function processNeedsChanges(page) {
 }
 
 function getPrDiffSummary({ dir, baseRef, headRef }) {
-  // Fetch refs into stable local names so we can diff reliably.
-  sh("git", ["-C", dir, "fetch", "origin", `${baseRef}:refs/heads/peregrine_base`], { timeout: 60_000 });
-  sh("git", ["-C", dir, "fetch", "origin", `${headRef}:refs/heads/peregrine_head`], { timeout: 60_000 });
+  const fetchRefs = () => {
+    // Fetch refs into stable local names so we can diff reliably.
+    sh("git", ["-C", dir, "fetch", "origin", `${baseRef}:refs/heads/peregrine_base`], { timeout: 60_000 });
+    sh("git", ["-C", dir, "fetch", "origin", `${headRef}:refs/heads/peregrine_head`], { timeout: 60_000 });
+  };
 
-  const diffStat = sh("git", ["-C", dir, "diff", "peregrine_base...peregrine_head", "--stat"], { timeout: 60_000 }).stdout;
-  const changedFiles = sh("git", ["-C", dir, "diff", "peregrine_base...peregrine_head", "--name-only"], { timeout: 60_000 }).stdout;
+  const runDiff = () => {
+    const diffStat = sh("git", ["-C", dir, "diff", "peregrine_base...peregrine_head", "--stat"], { timeout: 60_000 }).stdout;
+    const changedFiles = sh("git", ["-C", dir, "diff", "peregrine_base...peregrine_head", "--name-only"], { timeout: 60_000 }).stdout;
+    return { diffStat, changedFiles };
+  };
+
+  fetchRefs();
+
+  let diffStat = "";
+  let changedFiles = "";
+
+  try {
+    ({ diffStat, changedFiles } = runDiff());
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+
+    // If we cloned shallowly, merge-base may be missing; deepen/unshallow and retry once.
+    if (msg.includes("no merge base")) {
+      try {
+        sh("git", ["-C", dir, "fetch", "--unshallow", "origin"], { timeout: 120_000 });
+      } catch {
+        // ignore
+      }
+      try {
+        sh("git", ["-C", dir, "fetch", "--deepen", "200", "origin"], { timeout: 120_000 });
+      } catch {
+        // ignore
+      }
+
+      fetchRefs();
+      ({ diffStat, changedFiles } = runDiff());
+    } else {
+      throw e;
+    }
+  }
 
   return [
     "## Diff stat",
