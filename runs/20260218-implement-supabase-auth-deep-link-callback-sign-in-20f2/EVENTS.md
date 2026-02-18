@@ -34,3 +34,7 @@
 - 2026-02-18T19:13:31.072Z **SCOPE_DEV** — Dev scope: split (3 pkgs)
 - 2026-02-18T19:13:31.894Z **DEV** — Implementing
 - 2026-02-18T19:13:40.751Z **DEV_FAIL** — Package "Supabase core + session/token" failed: Dev agent produced zero file edits.
+- 2026-02-18T20:25:29.535Z **DEV** — Planning
+- 2026-02-18T20:26:04.398Z **SCOPE_DEV** — Dev scope: split (3 pkgs)
+- 2026-02-18T20:26:05.273Z **DEV** — Implementing
+- 2026-02-18T20:28:31.176Z **DEV_FAIL** — Package "SupabaseClient+Session" failed: Invalid file path from dev agent: Regretless/RegretlessApp.swift

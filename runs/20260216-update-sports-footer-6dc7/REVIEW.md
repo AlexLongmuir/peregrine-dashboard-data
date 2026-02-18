@@ -1,13 +1,10 @@
-Verdict: **PASS**
-
----
+Verdict: FAIL
 
 ### Manual QA required
-
-- **Visual verification:**  
-  - Footer matches https://www.spreadex.com/sports/mobile/homepage in layout, icons, text, and colors, pixel-for-pixel at 375px width (AC1).
-  - Active/selected state is visually identical to the reference (AC3).
-  - Footer is responsive and does not break at 320px, 375px, 414px, and 480px widths (AC4).
-- **Manual interac
+- Verify pixel-for-pixel match to Spreadex footer at 375px width (layout, spacing, colors, typography, icon sizes).
+- Verify responsive behavior at 320/375/414/480 widths on iOS + Android.
+- Verify active/selected styling matches reference on each corresponding page.
+- Verify tap/press feedback matches reference (highlight/active states).
+- Verify all link des
 
 [REDACTED]

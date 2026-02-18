@@ -1,10 +1,10 @@
 # Scope triage
 
-- Updated: 2026-02-17T09:05:23.194Z
+- Updated: 2026-02-18T20:23:23.540Z
 
 ```json
 {
   "decision": "split",
-  "rationale": "We don’t have the actual failing stack trace yet, and Vercel/Next build failures after a merge can come from multiple independent causes (TypeScript, lint, missing env vars, SSR/Edge runtime issues, module resolution). Splitting into a quick “reproduce + capture + classify” package and a follow-up
+  "rationale": "We don’t have the actual failing error yet, so the safest approach is to first capture and reproduce the failure deterministically, then apply the smallest fix, then harden the deployment/build checks to prevent regressions. These can be done sequentially in one PR while keeping each step independ
 
 [REDACTED]

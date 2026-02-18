@@ -1,10 +1,10 @@
 # Scope triage
 
-- Updated: 2026-02-18T19:12:45.058Z
+- Updated: 2026-02-18T20:25:19.506Z
 
 ```json
 {
   "decision": "split",
-  "rationale": "The PRD cleanly decomposes into three sequential concerns that are independently verifiable: (1) Xcode/SwiftUI scaffold that builds and renders required UI strings, (2) config wiring + AppConfig + networking + button-driven status handling, and (3) CI workflow + docs. Splitting reduces risk around
+  "rationale": "The PRD spans three distinct, sequential concerns that are each independently verifiable: (1) Xcode/SwiftUI scaffold and UI strings, (2) configuration wiring + networking + button-driven status behavior, and (3) CI + documentation. Splitting reduces risk (Xcode project setup vs. build-setting/Info
 
 [REDACTED]
