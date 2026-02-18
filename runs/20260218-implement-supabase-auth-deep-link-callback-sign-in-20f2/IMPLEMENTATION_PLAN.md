@@ -1,4 +1,4 @@
 ## Summary
-Implement end-to-end Supabase auth on iOS with session persistence, deep-link callback handling, and native Sign in with Apple. Provide a minimal SwiftUI login screen and authenticated placeholder screen, plus a single API to retrieve the current `Bearer` access token for backend requests. Configuration is read from `Info.plist` (no hardcoded secrets) and fails fast in Debug if missing.
+Implement full Supabase-based auth for iOS (SwiftUI): add Supabase Swift SDK, initialize client from `Info.plist` config, persist/restore session across restarts, handle auth callback deep links via `regretless://auth-callback`, and provide a minimal UI with native Sign in with Apple, authenticated placeholder screen, and sign out. Expose a single async API to retrieve the current acces
 
 [REDACTED]
