@@ -1,10 +1,10 @@
 # Scope triage
 
-- Updated: 2026-02-17T18:09:17.191Z
+- Updated: 2026-02-18T20:31:44.881Z
 
 ```json
 {
   "decision": "split",
-  "rationale": "This PRD mixes a pixel-perfect UI rebuild (HTML/CSS/icons/states) with behavioral requirements (routing fallbacks, offline handling, fatal render error banner) and telemetry. Splitting into sequential packages keeps each step independently verifiable (visual parity first, then navigation/offline/e
+  "rationale": "This change bundles three distinct concerns that are best verified independently: (1) pixel-perfect UI replication (HTML/CSS/icons/states) with responsive + a11y requirements, (2) navigation behavior + offline/coming-soon handling, and (3) telemetry + fatal-render error handling + tests. Splitting
 
 [REDACTED]
