@@ -2,3 +2,11 @@
 - 2026-02-18T18:03:12.489Z **SCOPE** — Scope triage: split
 - 2026-02-18T18:03:40.947Z **PRD_AGENT** — PRD drafted
 - 2026-02-18T18:03:42.039Z **GITHUB** — Created issue https://github.com/AlexLongmuir/regretless-3-ios/issues/2
+- 2026-02-18T18:25:00.088Z **DEV** — Planning
+- 2026-02-18T18:25:32.378Z **SCOPE_DEV** — Dev scope: split (3 pkgs)
+- 2026-02-18T18:25:33.507Z **DEV** — Implementing
+- 2026-02-18T18:25:35.948Z **DEV_FAIL** — Package "Supabase client + session/token core" failed: Dev agent produced zero file edits.
+- 2026-02-18T18:28:01.963Z **DEV** — Planning
+- 2026-02-18T18:28:39.461Z **SCOPE_DEV** — Dev scope: split (3 pkgs)
+- 2026-02-18T18:28:40.828Z **DEV** — Implementing
+- 2026-02-18T18:28:50.046Z **DEV_FAIL** — Package "Supabase client + session lifecycle" failed: Invalid file path from dev agent: REQUIRES_ALLOWED_PATHS
