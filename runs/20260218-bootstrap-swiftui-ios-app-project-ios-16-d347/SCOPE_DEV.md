@@ -1,6 +1,6 @@
 # Scope triage
 
-- Updated: 2026-02-18T19:06:51.846Z
+- Updated: 2026-02-18T19:12:45.058Z
 
 ```json
 {
