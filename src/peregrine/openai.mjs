@@ -172,6 +172,103 @@ If scope triage is provided, include a short "Work packages" subsection under Re
   return { title: String(json.title), body: String(json.body) };
 }
 
+
+
+export async function reviewPrdDraftForReadiness({ prdBody }) {
+  const m = model("OPENAI_MODEL_PRD_REVIEW", model("OPENAI_MODEL_PRD", "gpt-4.1"));
+
+  const system = `You are a pragmatic staff engineer reviewing a GitHub-issue PRD for implementation readiness.
+
+Return VALID JSON with keys:
+- ready: boolean (true if a dev bot can start implementing without needing human clarification)
+- score: number (1-5)
+- blocking_issues: string[] (only issues that truly block implementation; be specific)
+- non_blocking_notes: string[] (nice-to-fix improvements)
+- summary: string (1-2 sentences)
+
+Rules:
+- Prefer ready=true if details are sufficient to begin with reasonable assumptions.
+- If ready=false, blocking_issues MUST be concrete (e.g. missing exact copy, missing target repo/path constraints, missing AC).
+- Do not invent new services/endpoints.
+- Keep it short and actionable.`;
+
+  const text = await responsesText({ model: m, system, user: prdBody, temperature: 0.1, json: true });
+  const json = parseJsonOrThrow(text, "PRD readiness review");
+
+  return {
+    ready: Boolean(json.ready),
+    score: Number(json.score ?? 0),
+    blocking_issues: Array.isArray(json.blocking_issues) ? json.blocking_issues.map((x) => String(x)) : [],
+    non_blocking_notes: Array.isArray(json.non_blocking_notes) ? json.non_blocking_notes.map((x) => String(x)) : [],
+    summary: String(json.summary || ""),
+  };
+}
+
+export async function revisePrdFromPrdDraft({ title, roughDraft, targetRepo, oldPrdBody, review, scope = null }) {
+  const m = model("OPENAI_MODEL_PRD", "gpt-4.1");
+
+  const system = `You are a senior product manager and tech lead.
+
+You are given:
+- the original intake title + rough draft
+- the existing PRD markdown (as currently on the GitHub issue)
+- a reviewer JSON describing blocking issues
+
+Rewrite the PRD so it is READY TO IMPLEMENT.
+
+Output MUST be valid JSON with keys: title, body.
+The body MUST be Markdown and include sections exactly in this order:
+1. Original intake (verbatim)
+2. Revised PRD
+   - Problem / context
+   - Goals
+   - Non-goals
+   - UX / UI notes (include loading/empty/error/offline states)
+   - Acceptance Criteria (AC1, AC2, ...)
+   - Telemetry (Mixpanel) (only if relevant)
+   - RevenueCat impact (only if relevant)
+   - Backend/API notes (only if relevant)
+   - Supabase notes (schema/RLS/functions/migrations) (only if relevant)
+   - Test expectations
+   - Open questions
+
+Rules:
+- You MUST explicitly address all blocking issues from the reviewer.
+- Do NOT leave placeholders like "TBD".
+- If details are missing, make reasonable best-guess assumptions and choose exact values.
+- Do not invent nonexistent endpoints/services.`;
+
+  const scopeBlock = scope ? `\n\nScope triage JSON (best-effort):\n${JSON.stringify(scope).slice(0, 6000)}` : "";
+
+  const blocking = Array.isArray(review?.blocking_issues) ? review.blocking_issues.slice(0, 12).map((x) => `- ${String(x)}`).join("\n") : "";
+  const notes = Array.isArray(review?.non_blocking_notes) ? review.non_blocking_notes.slice(0, 12).map((x) => `- ${String(x)}`).join("\n") : "";
+
+  const user = [
+    `Target repo: ${targetRepo}`,
+    ``,
+    `Intake title: ${title}`,
+    ``,
+    `Intake rough draft (verbatim):`,
+    String(roughDraft || ""),
+    scopeBlock,
+    ``,
+    `Existing PRD (verbatim, for context):`,
+    String(oldPrdBody || "").slice(0, 14000),
+    ``,
+    `Reviewer blocking issues (must fix):`,
+    blocking ? blocking : "(none)",
+    ``,
+    `Reviewer non-blocking notes (nice-to-fix):`,
+    notes ? notes : "(none)",
+  ].filter(Boolean).join("\n");
+
+  const text = await responsesText({ model: m, system, user, temperature: 0.2, json: true });
+  const json = parseJsonOrThrow(text, "PRD revise agent");
+
+  if (!json.title || !json.body) throw new Error(`PRD revise agent missing fields: ${text.slice(0, 300)}`);
+  return { title: String(json.title), body: String(json.body) };
+}
+
 export async function planDev({ prdBody }) {
   // Use PRD model for planning to keep DEV model reserved for code edits.
   const m = model("OPENAI_MODEL_PRD", "gpt-4.1");

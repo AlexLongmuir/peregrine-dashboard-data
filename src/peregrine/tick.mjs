@@ -43,6 +43,7 @@ import {
   createPullRequest,
   ensureOriginToken,
   getIssue,
+  updateIssueBody,
   getPullRequest,
   mergePullRequest,
   listInstallationRepos,
@@ -56,7 +57,7 @@ import {
   updatePullRequest,
   cloneRepo,
 } from "./github.mjs";
-import { planDev, rewritePrdFromIntake, reviewAgainstPrd, scopeTriageFromIntake, scopeTriageFromPrd } from "./openai.mjs";
+import { planDev, revisePrdFromPrdDraft, rewritePrdFromIntake, reviewAgainstPrd, reviewPrdDraftForReadiness, scopeTriageFromIntake, scopeTriageFromPrd } from "./openai.mjs";
 import { implementFromPrd } from "./implement.mjs";
 import { boolEnv, ensureDir, intEnv, newRunId, readFileIfExists, writeFile, sh } from "./util.mjs";
 import { writeEvent, writeImplementation, writePatch, writePlan, writePrd, writeReview, writeScope, writeStatus } from "./artifacts.mjs";
@@ -66,6 +67,9 @@ const WORKSPACE = path.resolve(ROOT, "..");
 const AUTOHEAL_STATE_PATH = path.join(WORKSPACE, ".tmp", "peregrine_autoheal_state.json");
 const AUTOHEAL_ENABLED = boolEnv("PEREGRINE_AUTOHEAL", true);
 const AUTOHEAL_MAX_ITEMS = intEnv("PEREGRINE_AUTOHEAL_MAX_ITEMS", 25);
+const PRD_REVIEW_STATE_PATH = path.join(WORKSPACE, ".tmp", "peregrine_prd_review_state.json");
+const PRD_AUTOADVANCE = boolEnv("PEREGRINE_PRD_AUTOADVANCE", true);
+const PRD_AUTOREWRITE = boolEnv("PEREGRINE_PRD_AUTOREWRITE", true);
 const REDACT = boolEnv("PEREGRINE_REDACT_ARTIFACTS", true);
 const MAX_PACKAGES = intEnv("PEREGRINE_MAX_PACKAGES", 10);
 const INTAKE_AUTOSPLIT = boolEnv("PEREGRINE_INTAKE_AUTOSPLIT", false);
@@ -194,6 +198,59 @@ function saveAutohealState(state) {
   } catch {
     // ignore
   }
+}
+
+function loadPrdReviewState() {
+  const raw = readFileIfExists(PRD_REVIEW_STATE_PATH);
+  if (!raw) return { version: 1, pages: {} };
+  try {
+    const j = JSON.parse(raw);
+    if (!j || typeof j !== "object") return { version: 1, pages: {} };
+    if (!j.pages || typeof j.pages !== "object") j.pages = {};
+    return j;
+  } catch {
+    return { version: 1, pages: {} };
+  }
+}
+
+function savePrdReviewState(state) {
+  try {
+    writeFile(PRD_REVIEW_STATE_PATH, JSON.stringify(state, null, 2) + "\n");
+  } catch {
+    // ignore
+  }
+}
+
+function prdSig(text) {
+  // reuse the same conservative signature approach as autoheal
+  return autohealSig(String(text || "").slice(0, 4000));
+}
+
+function shouldAttemptPrdRewrite({ pageId, sig }) {
+  const state = loadPrdReviewState();
+  const entry = state.pages?.[pageId];
+  const prior = entry?.rewrites?.[sig];
+  return !prior?.attemptedAt;
+}
+
+function markPrdRewriteAttempt({ pageId, sig }) {
+  const state = loadPrdReviewState();
+  const pages = state.pages || (state.pages = {});
+  const entry = pages[pageId] || (pages[pageId] = {});
+  entry.rewrites = entry.rewrites || {};
+  entry.rewrites[sig] = { attemptedAt: new Date().toISOString() };
+  savePrdReviewState(state);
+}
+
+function markPrdReview({ pageId, sig, ready, review }) {
+  const state = loadPrdReviewState();
+  const pages = state.pages || (state.pages = {});
+  const entry = pages[pageId] || (pages[pageId] = {});
+  entry.lastReviewedAt = new Date().toISOString();
+  entry.lastReviewedSig = sig;
+  entry.lastReady = Boolean(ready);
+  entry.lastReviewSummary = String(review?.summary || "").slice(0, 500);
+  savePrdReviewState(state);
 }
 
 function recordErrorForAutoheal({ pageId, stage, errorText }) {
@@ -524,6 +581,124 @@ async function processIntake(page) {
   await updatePage(pageId, {
     Name: { title: [{ text: { content: prd.title.slice(0, 250) } }] },
   });
+}
+
+async function processPrdDrafted(page, { repo, issueNumber, prdBody } = {}) {
+  const pageId = page.id;
+  const title = readTitle(page);
+  const roughDraft = readRichText(page, "Rough Draft");
+  const targetRepo = readTargetRepo(page).trim();
+
+  const runId = readRichText(page, "Run ID") || newRunId(title);
+  await setRunId(pageId, runId);
+
+  if (!repo || !issueNumber) {
+    const issueUrl = readUrl(page, "GitHub Issue");
+    const ref = parseIssueFromUrl(issueUrl);
+    if (!ref) throw new Error(`Missing or invalid GitHub Issue URL on card: ${issueUrl}`);
+    repo = `${ref.owner}/${ref.repo}`;
+    issueNumber = ref.number;
+  }
+
+  const sig = prdSig(prdBody);
+
+  writeEvent({ root: ROOT, runId, kind: "PRD_REVIEW", text: `Reviewing PRD for readiness (sig=${sig})`, redact: REDACT });
+
+  const review = await reviewPrdDraftForReadiness({ prdBody });
+  markPrdReview({ pageId, sig, ready: review.ready, review });
+
+  if (review.ready && PRD_AUTOADVANCE) {
+    await setLatestFeedback(
+      pageId,
+      [
+        `Auto PRD review: ✅ ready for dev (score ${review.score}/5).`,
+        review.summary ? `Summary: ${review.summary}` : null,
+      ]
+        .filter(Boolean)
+        .join("\n")
+        .slice(0, 2000)
+    );
+
+    await setStatus(pageId, "Ready for Dev");
+    writeStatus({
+      root: ROOT,
+      runId,
+      status: "Ready for Dev",
+      repo: targetRepo,
+      notionUrl: notionPageUrl(page),
+      issueUrl: `https://github.com/${repo}/issues/${issueNumber}`,
+      prUrl: "",
+      redact: REDACT,
+    });
+
+    if (TEAM_MODE) {
+      const checkpoint = [
+        `Goal: ${title || "(untitled)"}`,
+        `Now: PRD auto-approved; queued for dev`,
+        `Next: implementation PR`,
+        `Blockers: none`,
+        `PR/Branch: (pending)`,
+        `Questions for alex: none`,
+      ].join("\n");
+      await teamSetStage(page, { stage: "In Progress", owner: "Developer", checkpoint });
+    }
+
+    return;
+  }
+
+  // Not ready: surface issues and (optionally) auto-rewrite once per PRD signature.
+  const blocking = (review.blocking_issues || []).slice(0, 8);
+  const notes = (review.non_blocking_notes || []).slice(0, 8);
+
+  await setLatestFeedback(
+    pageId,
+    [
+      `Auto PRD review: ⚠️ not ready for dev (score ${review.score}/5).`,
+      review.summary ? `Summary: ${review.summary}` : null,
+      blocking.length ? ["Blocking:", ...blocking.map((x) => `- ${x}`)].join("\n") : null,
+      notes.length ? ["Non-blocking:", ...notes.map((x) => `- ${x}`)].join("\n") : null,
+    ]
+      .filter(Boolean)
+      .join("\n")
+      .slice(0, 2000)
+  );
+
+  if (!PRD_AUTOREWRITE) return;
+  if (!shouldAttemptPrdRewrite({ pageId, sig })) return;
+
+  markPrdRewriteAttempt({ pageId, sig });
+
+  writeEvent({ root: ROOT, runId, kind: "PRD_REWRITE", text: `Auto-rewriting PRD to address blocking issues (sig=${sig})`, redact: REDACT });
+
+  const revised = await revisePrdFromPrdDraft({
+    title,
+    roughDraft,
+    targetRepo,
+    oldPrdBody: prdBody,
+    review,
+    scope: null,
+  });
+
+  // Update the GitHub issue to keep GitHub as the PRD source of truth.
+  await updateIssueBody({ repo, issueNumber, title: revised.title, body: revised.body });
+  writePrd({ root: ROOT, runId, prdMarkdown: revised.body, redact: REDACT });
+
+  // Leave in PRD Drafted; next tick will re-review and auto-advance if ready.
+  await setStatus(pageId, "PRD Drafted");
+
+  // Best-effort: leave an audit comment on the issue.
+  try {
+    const msg = [
+      `Peregrine PRD auto-review: not ready → auto-rewrote PRD.`,
+      review.summary ? `Summary: ${review.summary}` : null,
+      blocking.length ? ["Blocking issues addressed:", ...blocking.map((x) => `- ${x}`)].join("\n") : null,
+    ]
+      .filter(Boolean)
+      .join("\n");
+    await commentOnIssue({ repo, issueNumber, body: msg.slice(0, 6000) });
+  } catch {
+    // ignore
+  }
 }
 
 async function processReadyForDev(page, { humanFeedback = "" } = {}) {  // humanFeedback: used when rerunning from Needs Changes
@@ -1388,6 +1563,31 @@ async function main() {
     const intakeItems = (intake.results ?? []).filter(teamAllowsProcess).slice(0, max);
     for (const page of intakeItems) {
       const ok = await handleLlmAction(page, "Intake", async () => processIntake(page));
+      if (!ok) break;
+    }
+
+    // PRD Drafted (auto-review gate: advance to Ready for Dev when PRD is implementation-ready)
+    const prdDrafted = await queryItemsByStatus("PRD Drafted");
+    const prdDraftedItems = (prdDrafted.results ?? []).filter(teamAllowsProcess).slice(0, max);
+    for (const page of prdDraftedItems) {
+      // Fast skip: avoid spending LLM actions when we've already reviewed this exact PRD signature and already attempted a rewrite.
+      const issueUrl = readUrl(page, "GitHub Issue");
+      const ref = parseIssueFromUrl(issueUrl);
+      if (!ref) continue;
+      const repo = `${ref.owner}/${ref.repo}`;
+      const issue = await getIssue({ repo, issueNumber: ref.number });
+      const prdBody = issue.body || "";
+      const sig = prdSig(prdBody);
+
+      const st = loadPrdReviewState();
+      const entry = st.pages?.[page.id];
+      const alreadyReviewedSameSig = entry?.lastReviewedSig === sig;
+      const alreadyRewroteSameSig = Boolean(entry?.rewrites?.[sig]?.attemptedAt);
+      if (alreadyReviewedSameSig && alreadyRewroteSameSig && entry?.lastReady === false) {
+        continue;
+      }
+
+      const ok = await handleLlmAction(page, "PRD Drafted", async () => processPrdDrafted(page, { repo, issueNumber: ref.number, prdBody }));
       if (!ok) break;
     }
 
