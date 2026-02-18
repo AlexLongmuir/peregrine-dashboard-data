@@ -1,0 +1,4 @@
+- 2026-02-18T18:01:52.300Z **INTAKE** — Notion intake received: Bootstrap SwiftUI iOS app project (iOS 16+)
+- 2026-02-18T18:02:08.362Z **SCOPE** — Scope triage: split
+- 2026-02-18T18:02:48.828Z **PRD_AGENT** — PRD drafted
+- 2026-02-18T18:02:50.670Z **GITHUB** — Created issue https://github.com/AlexLongmuir/regretless-3-ios/issues/1

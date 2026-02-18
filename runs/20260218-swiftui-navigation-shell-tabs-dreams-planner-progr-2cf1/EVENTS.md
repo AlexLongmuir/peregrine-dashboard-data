@@ -1,0 +1,4 @@
+- 2026-02-18T18:03:54.240Z **INTAKE** — Notion intake received: SwiftUI navigation shell: Tabs (Dreams/Planner/Progress/Account)
+- 2026-02-18T18:04:08.580Z **SCOPE** — Scope triage: split
+- 2026-02-18T18:04:32.586Z **PRD_AGENT** — PRD drafted
+- 2026-02-18T18:04:34.929Z **GITHUB** — Created issue https://github.com/AlexLongmuir/regretless-3-ios/issues/3

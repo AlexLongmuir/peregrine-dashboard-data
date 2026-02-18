@@ -1,0 +1,4 @@
+- 2026-02-18T18:02:57.421Z **INTAKE** — Notion intake received: Implement Supabase auth + deep link callback + Sign in with Apple
+- 2026-02-18T18:03:12.489Z **SCOPE** — Scope triage: split
+- 2026-02-18T18:03:40.947Z **PRD_AGENT** — PRD drafted
+- 2026-02-18T18:03:42.039Z **GITHUB** — Created issue https://github.com/AlexLongmuir/regretless-3-ios/issues/2

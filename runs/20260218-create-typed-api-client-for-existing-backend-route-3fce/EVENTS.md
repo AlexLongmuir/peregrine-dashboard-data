@@ -1,0 +1,4 @@
+- 2026-02-18T18:04:41.956Z **INTAKE** — Notion intake received: Create typed API client for existing backend routes
+- 2026-02-18T18:04:56.436Z **SCOPE** — Scope triage: split
+- 2026-02-18T18:05:30.446Z **PRD_AGENT** — PRD drafted
+- 2026-02-18T18:05:32.110Z **GITHUB** — Created issue https://github.com/AlexLongmuir/regretless-3-ios/issues/4
