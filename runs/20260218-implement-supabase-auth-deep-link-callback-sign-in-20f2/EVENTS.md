@@ -10,3 +10,11 @@
 - 2026-02-18T18:28:39.461Z **SCOPE_DEV** — Dev scope: split (3 pkgs)
 - 2026-02-18T18:28:40.828Z **DEV** — Implementing
 - 2026-02-18T18:28:50.046Z **DEV_FAIL** — Package "Supabase client + session lifecycle" failed: Invalid file path from dev agent: REQUIRES_ALLOWED_PATHS
+- 2026-02-18T18:31:03.050Z **DEV** — Planning
+- 2026-02-18T18:32:03.805Z **SCOPE_DEV** — Dev scope: split (3 pkgs)
+- 2026-02-18T18:32:33.196Z **DEV** — Implementing
+- 2026-02-18T18:33:04.251Z **DEV_FAIL** — Package "Supabase client + session/token core" failed: Invalid file path from dev agent: NEED_ALLOWED_PATHS
+- 2026-02-18T18:49:27.928Z **DEV** — Planning
+- 2026-02-18T18:49:57.281Z **SCOPE_DEV** — Dev scope: split (3 pkgs)
+- 2026-02-18T18:49:58.230Z **DEV** — Implementing
+- 2026-02-18T18:50:01.090Z **DEV_FAIL** — Package "Supabase client + session/token core" failed: Dev agent produced zero file edits.

@@ -6,3 +6,5 @@
 - 2026-02-18T18:26:16.385Z **SCOPE_DEV** — Dev scope: split (3 pkgs)
 - 2026-02-18T18:26:17.817Z **DEV** — Implementing
 - 2026-02-18T18:26:21.529Z **DEV_FAIL** — Package "TabShell+NavStacks" failed: Invalid file path from dev agent: 
+- 2026-02-18T18:34:13.950Z **DEV** — Planning
+- 2026-02-18T18:34:58.079Z **SCOPE_DEV** — Dev scope: split (3 pkgs)

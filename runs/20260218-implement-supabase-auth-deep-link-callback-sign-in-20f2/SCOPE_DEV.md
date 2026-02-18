@@ -1,10 +1,10 @@
 # Scope triage
 
-- Updated: 2026-02-18T18:28:39.461Z
+- Updated: 2026-02-18T18:49:57.281Z
 
 ```json
 {
   "decision": "split",
-  "rationale": "Auth spans SDK/config bootstrapping, session lifecycle/token API, URL/deep-link callback plumbing, and UI + Sign in with Apple. Splitting into 3 sequential packages reduces integration risk (especially deep link + Apple auth), keeps each step independently verifiable, and matches the PRD’s own wor
+  "rationale": "Auth touches app startup, configuration, persistence, URL routing, and Apple sign-in UI. Splitting into 3 sequential packages reduces integration risk and makes each step independently verifiable (build/config + session restore/token API, then deep link completion, then Apple sign-in + UI state/si
 
 [REDACTED]
