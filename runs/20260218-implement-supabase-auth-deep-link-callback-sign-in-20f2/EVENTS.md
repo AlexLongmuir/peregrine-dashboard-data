@@ -26,3 +26,7 @@
 - 2026-02-18T19:01:37.370Z **SCOPE_DEV** — Dev scope: split (3 pkgs)
 - 2026-02-18T19:01:38.197Z **DEV** — Implementing
 - 2026-02-18T19:01:43.381Z **DEV_FAIL** — Package "Supabase core + session/token" failed: Dev agent produced zero file edits.
+- 2026-02-18T19:07:18.135Z **DEV** — Planning
+- 2026-02-18T19:07:50.906Z **SCOPE_DEV** — Dev scope: split (3 pkgs)
+- 2026-02-18T19:07:52.066Z **DEV** — Implementing
+- 2026-02-18T19:07:58.115Z **DEV_FAIL** — Package "Supabase client + config + session/token" failed: Dev agent produced zero file edits.
