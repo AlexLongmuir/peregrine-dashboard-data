@@ -12,3 +12,4 @@
 - 2026-02-18T20:24:11.997Z **PRD_REWRITE** — Auto-rewriting PRD to address blocking issues (sig=8e90661f7dd6)
 - 2026-02-18T20:30:21.793Z **PRD_REVIEW** — Reviewing PRD for readiness (sig=532e9b9872cc)
 - 2026-02-18T20:30:29.058Z **PRD_REWRITE** — Auto-rewriting PRD to address blocking issues (sig=532e9b9872cc)
+- 2026-02-20T01:56:40.119Z **ERROR** — Missing or invalid GitHub PR URL on card: 

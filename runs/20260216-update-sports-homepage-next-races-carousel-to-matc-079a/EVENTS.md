@@ -71,3 +71,4 @@
 - 2026-02-17T21:02:14.173Z **DEV** — Planning
 - 2026-02-17T21:02:48.840Z **SCOPE_DEV** — Dev scope: split (3 pkgs)
 - 2026-02-17T21:02:51.065Z **DEV** — Implementing
+- 2026-02-20T01:56:36.252Z **MERGED** — Merged: https://github.com/AlexLongmuir/spreadex-mobile-ui/pull/9
