@@ -1,10 +1,10 @@
 # Scope triage
 
-- Updated: 2026-02-18T21:17:51.487Z
+- Updated: 2026-02-21T20:42:18.150Z
 
 ```json
 {
   "decision": "split",
-  "rationale": "The PRD spans three distinct, sequential concerns that are independently verifiable: (1) creating a correct Xcode/SwiftUI scaffold that builds and renders required UI strings, (2) wiring secrets-safe configuration + networking behavior that depends on the scaffold, and (3) CI + documentation that 
+  "rationale": "The PRD spans three distinct, sequential concerns that are independently verifiable: (1) creating a correct Xcode/SwiftUI scaffold that builds and renders required UI strings, (2) wiring secrets-safe xcconfig/Info.plist substitution plus a networking stub and UI interaction, and (3) making CI + do
 
 [REDACTED]

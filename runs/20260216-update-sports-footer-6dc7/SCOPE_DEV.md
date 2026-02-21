@@ -1,10 +1,10 @@
 # Scope triage
 
-- Updated: 2026-02-18T20:31:44.881Z
+- Updated: 2026-02-21T20:37:54.253Z
 
 ```json
 {
   "decision": "split",
-  "rationale": "This change bundles three distinct concerns that are best verified independently: (1) pixel-perfect UI replication (HTML/CSS/icons/states) with responsive + a11y requirements, (2) navigation behavior + offline/coming-soon handling, and (3) telemetry + fatal-render error handling + tests. Splitting
+  "rationale": "This is mostly UI, but it has distinct, independently verifiable concerns: (1) pixel-perfect markup/CSS and responsive behavior, (2) navigation + offline/coming-soon/error handling, and (3) telemetry + tests/accessibility. Splitting reduces risk of regressions and makes review/verification straigh
 
 [REDACTED]
