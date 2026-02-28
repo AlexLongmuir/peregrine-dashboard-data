@@ -285,7 +285,7 @@ Output MUST be Markdown with sections:
   return responsesText({ model: m, system, user: prdBody, temperature: 0.2, json: false });
 }
 
-export async function generateEdits({ prdBody, plan, allowedPaths, repoFiles, candidateFiles, previousError, workPackage = null }) {
+export async function generateEdits({ prdBody, plan, allowedPaths, newPathRules = [], repoFiles, candidateFiles, previousError, workPackage = null }) {
   const m = model("OPENAI_MODEL_DEV", "gpt-4.1");
 
   const system = `You are a senior engineer. Implement the PRD by editing files.
@@ -300,8 +300,8 @@ Output MUST be valid JSON with this shape:
 Hard requirements:
 - Provide FULL new content for each file you change.
 - Touch at most 5 files.
-- You MUST choose each path from the ALLOWED_PATHS list provided by the user.
-- Do NOT create new files.
+- Prefer paths from ALLOWED_PATHS first.
+- If you must create a new file, it MUST match one of the ALLOWED_NEW_PATH_RULES.
 - No binary files.
 - Prefer minimal changes.
 - If previousError is provided, fix that exact problem.
@@ -314,7 +314,8 @@ Do NOT include markdown fences. JSON only.`;
     `# PRD\n\n${prdBody}`,
     `# Plan\n\n${plan}`,
     wp,
-    allowedPaths?.length ? `# ALLOWED_PATHS (choose from these ONLY)\n${allowedPaths.join("\n")}` : null,
+    `# ALLOWED_PATHS (prefer these first)\n${(allowedPaths || []).length ? allowedPaths.join("\n") : "(none)"}`,
+    `# ALLOWED_NEW_PATH_RULES (for new files only)\n${(newPathRules || []).join("\n") || "(none)"}`,
     `# Repo file list (partial)\n${(repoFiles || []).slice(0, 2000).join("\n")}`,
     candidateFiles ? `# Candidate file contents\n${candidateFiles}` : null,
     previousError ? `# Previous error\n${previousError}` : null,

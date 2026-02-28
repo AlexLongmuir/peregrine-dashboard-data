@@ -160,8 +160,8 @@ function buildAllowedPaths({ dir, repoFiles, hintText, isExcluded }) {
     .filter((p) => !isExcluded(p))
     .filter(
       (p) =>
-        /^(src|app|components|backend|packages|lib|utils|hooks|services|server|client|pages)\//i.test(p) ||
-        /\.(ts|tsx|js|jsx|json|css|scss|less|yml|yaml|toml|graphql|gql|sql|prisma|py|go|java|kt|swift|m|mm|h)$/i.test(p)
+        /^(src|app|components|backend|packages|lib|utils|hooks|services|server|client|pages|ios|android|Sources|Tests|Regretless|Docs)\//i.test(p) ||
+        /\.(ts|tsx|js|jsx|json|css|scss|less|yml|yaml|toml|graphql|gql|sql|prisma|py|go|java|kt|swift|m|mm|h|md)$/i.test(p)
     )
     .slice(0, 800);
 
@@ -170,20 +170,25 @@ function buildAllowedPaths({ dir, repoFiles, hintText, isExcluded }) {
     .filter((p) => p !== "App.tsx")
     .slice(0, 250);
 
-  // If we still have nothing, include a minimal set of likely entrypoints (last resort)
+  // If we still have nothing, fall back to any tracked files (sparse repos) then likely entrypoints.
   if (allowedPaths.length === 0) {
-    const fallback = [
+    const trackedFallback = repoFiles.filter((p) => !isExcluded(p)).slice(0, 120);
+    const entryFallback = [
       "app/index.tsx",
       "app/(tabs)/index.tsx",
       "app/(auth)/index.tsx",
       "app/_layout.tsx",
       "app/(tabs)/_layout.tsx",
       "components/BenefitsSection.tsx",
+      "Regretless/RegretlessApp.swift",
+      "Sources/Networking/APIClient.swift",
+      "README.md",
     ].filter((p) => repoFiles.includes(p));
-    allowedPaths.push(...fallback);
+
+    allowedPaths.push(...trackedFallback, ...entryFallback);
   }
 
-  return { allowedPaths, hints, grep };
+  return { allowedPaths: [...new Set(allowedPaths)].slice(0, 250), hints, grep };
 }
 
 function buildCandidateFiles({ dir, allowedPaths, maxFiles = 8 }) {
@@ -194,6 +199,52 @@ function buildCandidateFiles({ dir, allowedPaths, maxFiles = 8 }) {
     if (c) blocks.push(`## file: ${rel}\n\n${c}`);
   }
   return blocks.join("\n\n");
+}
+
+function allowedNewPathRules() {
+  return [
+    "src/**",
+    "app/**",
+    "components/**",
+    "backend/**",
+    "packages/**",
+    "lib/**",
+    "utils/**",
+    "hooks/**",
+    "services/**",
+    "server/**",
+    "client/**",
+    "pages/**",
+    "ios/**",
+    "android/**",
+    "Sources/**",
+    "Tests/**",
+    "Regretless/**",
+    ".github/workflows/*.yml",
+    ".github/workflows/*.yaml",
+    "*.{ts,tsx,js,jsx,json,css,scss,less,yml,yaml,toml,graphql,gql,sql,prisma,py,go,java,kt,swift,m,mm,h,md}",
+  ];
+}
+
+function isAllowedByRule(rel, rule) {
+  const esc = (s) => s.replace(/[.+^${}()|[\]\\]/g, "\\$&");
+  const rx = new RegExp(
+    "^" +
+      esc(rule)
+        .replace(/\\\*\\\*/g, ".*")
+        .replace(/\\\*/g, "[^/]*")
+        .replace(/\\\{([^}]+)\\\}/g, "($1)")
+        .replace(/,/g, "|") +
+      "$",
+    "i"
+  );
+  return rx.test(rel);
+}
+
+function isAllowedOutputPath({ rel, allowedPaths, isExcluded, newPathRules }) {
+  if (!rel || isExcluded(rel)) return false;
+  if (allowedPaths.includes(rel)) return true;
+  return (newPathRules || []).some((rule) => isAllowedByRule(rel, rule));
 }
 
 function restoreFiles({ dir, beforeContents }) {
@@ -306,6 +357,7 @@ export async function implementFromPrd({
     const hintText = [prdBody, workPackage ? packageHintText(workPackage) : null].filter(Boolean).join("\n\n");
 
     const { allowedPaths } = buildAllowedPaths({ dir, repoFiles, hintText, isExcluded });
+    const newPathRules = allowedNewPathRules();
     const candidateFiles = buildCandidateFiles({ dir, allowedPaths, maxFiles: 8 });
 
     const combinedErr = [humanFeedback, lastErr].filter(Boolean).join("\n\n");
@@ -314,6 +366,7 @@ export async function implementFromPrd({
       prdBody,
       plan,
       allowedPaths,
+      newPathRules,
       repoFiles,
       candidateFiles,
       previousError: combinedErr,
@@ -330,7 +383,15 @@ export async function implementFromPrd({
       content: String(f.content ?? ""),
     }));
 
-    const invalid = toWrite.find((f) => !f.rel || !allowedPaths.includes(f.rel));
+    const invalid = toWrite.find(
+      (f) =>
+        !isAllowedOutputPath({
+          rel: f.rel,
+          allowedPaths,
+          isExcluded,
+          newPathRules,
+        })
+    );
     if (invalid) {
       return { ok: false, error: `Invalid file path from dev agent: ${invalid.rel}` };
     }
@@ -360,6 +421,7 @@ export async function implementFromPrd({
 
       for (const f of toWrite) {
         const abs = path.join(dir, f.rel);
+        fs.mkdirSync(path.dirname(abs), { recursive: true });
         fs.writeFileSync(abs, f.content);
       }
 
